@@ -410,7 +410,7 @@ async function loadMatches() {
   var dateStr = today.toISOString().split('T')[0];
   var API_KEY = '9a3bacc0f7774dc5bc9f54bf4c8abb35';
   async function apiFetch(path) {
-    var res = await fetch('https://api.football-data.org/v4/'+path, {
+    var res = await fetch('https://corsproxy.io/?' + encodeURIComponent('https://api.football-data.org/v4/'+path), {
       headers: { 'X-Auth-Token': API_KEY }
     });
     var rem = res.headers.get('X-RateLimit-Remaining');
