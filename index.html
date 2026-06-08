@@ -168,11 +168,14 @@
   </section>
   <section class="section" id="sec-news">
     <div class="section-header"><h2>📰 Notícias</h2><p>As últimas do Mundial</p></div>
+    <div class="section-actions"><button class="refresh-btn" onclick="loadNews()">↻ Atualizar</button></div>
     <div class="news-card">
-      <div class="news-card-header"><span class="news-card-title">Hoje</span><span class="news-date" id="news-date"></span></div>
-      <div id="news-list"></div>
+      <div class="news-card-header">
+        <span class="news-card-title">Google News · Mundial 2026</span>
+        <span class="news-date" id="news-last-updated"></span>
+      </div>
+      <div id="news-list"><div class="loading"><div class="loading-spinner"></div><div>A carregar notícias...</div></div></div>
     </div>
-    <div class="edit-hint">✏️ Adiciona notícias em <strong>DATA_NEWS</strong></div>
   </section>
   <section class="section" id="sec-matches">
     <div class="section-header"><h2>🗓️ Jogos</h2><p>Jogos do Mundial de hoje</p></div>
@@ -286,7 +289,7 @@ function formatDate(d) {
 }
 var today = new Date();
 document.getElementById('header-date-str').textContent = formatDate(today);
-document.getElementById('news-date').textContent = formatDate(today);
+var _nd = document.getElementById('news-date'); if(_nd) _nd.textContent = formatDate(today);
 
 var countdownInterval = null;
 function pad(n){return String(n).padStart(2,'0')}
@@ -371,13 +374,63 @@ function renderMVP() {
   }).join('');
 }
 
-function renderNews() {
-  document.getElementById('news-list').innerHTML = DATA_NEWS.map(function(n){
-    return '<div class="news-item"'+(n.link?' onclick="window.open(\''+n.link+'\',\'_blank\')"':'')+'>'+
-      '<div class="news-emoji">'+n.emoji+'</div>'+
-      '<div class="news-content"><span class="news-tag tag-'+n.tag+'">'+n.tagLabel+'</span>'+
-      '<div class="news-title">'+n.title+'</div><div class="news-meta">'+n.meta+'</div></div></div>';
+function renderStaticNews() {
+  var html = DATA_NEWS.map(function(n) {
+    return '<div class="news-item"' + (n.link ? ' data-href="' + n.link + '"' : '') + '>' +
+      '<div class="news-emoji">' + n.emoji + '</div>' +
+      '<div class="news-content"><span class="news-tag tag-' + n.tag + '">' + n.tagLabel + '</span>' +
+      '<div class="news-title">' + n.title + '</div>' +
+      '<div class="news-meta">' + n.meta + '</div></div></div>';
   }).join('');
+  document.getElementById('news-list').innerHTML = html;
+  addNewsClicks('news-list');
+}
+
+async function loadNews() {
+  var container = document.getElementById('news-list');
+  var ts = document.getElementById('news-last-updated');
+  if (window.location.protocol === 'file:') {
+    renderStaticNews();
+    if (ts) ts.textContent = 'manual';
+    return;
+  }
+  container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>A carregar noticias...</div></div>';
+  var rssUrl = 'https://news.google.com/rss/search?q=Mundial+2026+futebol&hl=pt-PT&gl=PT&ceid=PT:pt';
+  try {
+    var res = await fetch('https://corsproxy.io/?' + encodeURIComponent(rssUrl));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var xml = new DOMParser().parseFromString(await res.text(), 'text/xml');
+    var items = Array.from(xml.querySelectorAll('item')).slice(0, 10);
+    if (!items.length) throw new Error('sem artigos');
+    var html = items.map(function(item) {
+      var title  = ((item.querySelector('title')   || {}).textContent || '').replace(/\s[-–]\s[^\-–]+$/, '').trim();
+      var link   =  (item.querySelector('link')    || {}).textContent || '';
+      var pub    =  (item.querySelector('pubDate') || {}).textContent || '';
+      var source =  (item.querySelector('source')  || {}).textContent || 'Google News';
+      var dateStr = pub ? new Date(pub).toLocaleDateString('pt-PT',{day:'numeric',month:'short'}) + ' ' +
+                         new Date(pub).toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'}) : '';
+      return '<div class="news-item" data-href="' + link + '">' +
+        '<div class="news-emoji">&#x1F4F0;</div>' +
+        '<div class="news-content">' +
+          '<span class="news-tag tag-preview">' + source + '</span>' +
+          '<div class="news-title">' + (title || 'Sem titulo') + '</div>' +
+          '<div class="news-meta">' + dateStr + '</div>' +
+        '</div></div>';
+    }).join('');
+    container.innerHTML = html;
+    addNewsClicks('news-list');
+    if (ts) ts.textContent = 'atualizado as ' + new Date().toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'});
+  } catch(err) {
+    console.warn('RSS falhou:', err.message);
+    renderStaticNews();
+    if (ts) ts.textContent = 'manual';
+  }
+}
+
+function addNewsClicks(containerId) {
+  document.querySelectorAll('#' + containerId + ' .news-item[data-href]').forEach(function(el) {
+    el.addEventListener('click', function() { window.open(this.getAttribute('data-href'), '_blank'); });
+  });
 }
 
 function statusBadge(s) {
@@ -456,7 +509,7 @@ renderPortugalCard();
 renderScorers();
 renderChampions();
 renderMVP();
-renderNews();
+loadNews();
 </script>
 </body>
 </html>
