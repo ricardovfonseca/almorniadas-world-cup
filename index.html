@@ -340,8 +340,12 @@ async function loadUserPredictions() {
       // Handle nested structure { matches: { "id": {...} } }
       var matchesData = (d.matches && typeof d.matches === 'object') ? d.matches : {};
       // Also recover legacy flat keys "matches.417478" (saved by incorrect set() usage)
+      // but only if NOT already present in the nested structure (nested = more recent)
       Object.keys(d).forEach(function(k) {
-        if (k.startsWith('matches.')) { matchesData[k.slice(8)] = d[k]; }
+        if (k.startsWith('matches.')) {
+          var mid = k.slice(8);
+          if (!matchesData[mid]) { matchesData[mid] = d[k]; }
+        }
       });
       userPredictions.matches    = matchesData;
       userPredictions.tournament = d.tournament || {};
