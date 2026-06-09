@@ -245,17 +245,6 @@
     <div class="card"><div class="card-title"><span class="icon">🏆</span> Favoritos ao Título</div><div id="champions-list"></div></div>
     <div class="card mvp-card"><div class="card-title"><span class="icon">⭐</span> Previsão MVP do Mundial</div><div id="mvp-content"></div></div>
   </section>
-  <section class="section" id="sec-news">
-    <div class="section-header"><h2>📰 Notícias</h2><p>As últimas do Mundial</p></div>
-    <div class="section-actions"><button class="refresh-btn" onclick="loadNews()">↻ Atualizar</button></div>
-    <div class="news-card">
-      <div class="news-card-header">
-        <span class="news-card-title">Google News · Mundial 2026</span>
-        <span class="news-date" id="news-last-updated"></span>
-      </div>
-      <div id="news-list"><div class="loading"><div class="loading-spinner"></div><div>A carregar notícias...</div></div></div>
-    </div>
-  </section>
   <section class="section" id="sec-matches">
     <div class="section-header"><h2>🗓️ Jogos</h2><p>Jogos do Mundial</p></div>
     <div class="section-actions"><button class="refresh-btn" onclick="loadMatches()">↻ Atualizar</button></div>
@@ -269,7 +258,6 @@
 </main>
 <nav>
   <button class="nav-btn active" id="nav-dashboard" onclick="showSection('dashboard')"><span class="nav-icon">📊</span><span>Dashboard</span></button>
-  <button class="nav-btn" id="nav-news" onclick="showSection('news')"><span class="nav-icon">📰</span><span>Notícias</span></button>
   <button class="nav-btn" id="nav-matches" onclick="showSection('matches')"><span class="nav-icon">⚽</span><span>Jogos</span></button>
   <button class="nav-btn" id="nav-ranking" onclick="showSection('ranking')"><span class="nav-icon">🏅</span><span>Ranking</span></button>
 </nav>
@@ -964,8 +952,6 @@ function renderMatch(m) {
     '<div id="pred-'+mid+'"></div>'+
     '</div>'+
     (m.venue ? '<div class="match-footer"><span class="match-detail">&#x1F3DF;&#xFE0F; '+m.venue+'</span></div>' : '')+
-    '<button class="h2h-btn" data-home="'+home.replace(/"/g,'&quot;')+'" data-away="'+away.replace(/"/g,'&quot;')+'" onclick="toggleH2H(\''+mid+'\',this.dataset.home,this.dataset.away)">📊 Último encontro entre estas equipas</button>'+
-    '<div class="h2h-panel" id="h2h-'+mid+'"></div>'+
   '</div>';
 }
 
