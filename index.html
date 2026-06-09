@@ -582,7 +582,7 @@ function renderMVP() {
   }).join('');
 }
 
-/* ══ API fetch ══ */
+/* ══ API fetch — football-data.org ══ */
 var WC_API_KEY = '9a3bacc0f7774dc5bc9f54bf4c8abb35';
 function wcFetch(path) {
   if (window.location.protocol === 'file:') return fetch('/api/' + path);
@@ -590,6 +590,29 @@ function wcFetch(path) {
   return fetch('https://corsproxy.io/?' + encodeURIComponent('https://api.football-data.org/v4/' + path), {
     headers: { 'X-Auth-Token': WC_API_KEY }
   });
+}
+
+/* ══ API fetch — api-football.com (H2H completo) ══
+   Regista-te em rapidapi.com → subscreve API-Football (Basic, grátis)
+   e substitui o valor abaixo pela tua key.                          */
+var APIFOOTBALL_KEY = '3f9a2907c2ac662d65bb73f372b01814';
+function afFetch(path) {
+  var url = 'https://v3.football.api-sports.io/' + path;
+  return fetch('https://corsproxy.io/?' + encodeURIComponent(url), {
+    headers: { 'x-apisports-key': APIFOOTBALL_KEY }
+  });
+}
+async function getAfTeamId(teamName) {
+  var cKey = 'aft_' + teamName.toLowerCase().replace(/\W/g,'_');
+  try { var cached = localStorage.getItem(cKey); if (cached) return parseInt(cached); } catch(e){}
+  var res = await afFetch('teams?search=' + encodeURIComponent(teamName));
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  var data = await res.json();
+  var teams = data.response || [];
+  if (!teams.length) throw new Error('Equipa não encontrada: ' + teamName);
+  var found = teams.find(function(t){ return t.team.name.toLowerCase() === teamName.toLowerCase(); }) || teams[0];
+  try { localStorage.setItem(cKey, String(found.team.id)); } catch(e){}
+  return found.team.id;
 }
 
 /* ══ Dashboard dinâmico ══ */
@@ -690,8 +713,21 @@ async function loadNews() {
   if (window.location.protocol === 'file:') { renderStaticNews(); if(ts)ts.textContent='manual'; return; }
   container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>A carregar noticias...</div></div>';
   var rssUrl = 'https://news.google.com/rss/search?q=Mundial+2026+futebol&hl=pt-PT&gl=PT&ceid=PT:pt';
+  async function fetchRss(url) {
+    var proxies = [
+      'https://corsproxy.io/?' + encodeURIComponent(url),
+      'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+    ];
+    for (var i = 0; i < proxies.length; i++) {
+      try {
+        var r = await fetch(proxies[i]);
+        if (r.ok) return r;
+      } catch(e) { continue; }
+    }
+    throw new Error('Proxies indisponíveis');
+  }
   try {
-    var res = await fetch('https://corsproxy.io/?' + encodeURIComponent(rssUrl));
+    var res = await fetchRss(rssUrl);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var xml = new DOMParser().parseFromString(await res.text(), 'text/xml');
     var items = Array.from(xml.querySelectorAll('item')).slice(0, 10);
@@ -834,33 +870,68 @@ function showToast(matchId, msg) {
 }
 
 /* ══ H2H ══ */
-function toggleH2H(matchId) {
+async function toggleH2H(matchId, homeTeam, awayTeam) {
   var panel = document.getElementById('h2h-'+matchId);
   if (!panel) return;
   if (panel.classList.contains('open')) { panel.classList.remove('open'); return; }
   if (panel.dataset.loaded) { panel.classList.add('open'); return; }
   panel.classList.add('open');
-  panel.innerHTML = '<div class="h2h-title">Últimos encontros</div><div style="color:var(--text3);font-size:11px">A carregar...</div>';
   panel.dataset.loaded = '1';
-  wcFetch('matches/'+matchId+'/head2head?limit=3').then(function(res){
+  panel.innerHTML = '<div class="h2h-title">Últimos encontros</div><div style="color:var(--text3);font-size:11px">A carregar...</div>';
+
+  function renderH2HMatches(matches) {
+    if (!matches.length) { panel.innerHTML = '<div class="h2h-title">Histórico</div><div style="font-size:11px;color:var(--text3)">Sem encontros anteriores registados.</div>'; return; }
+    panel.innerHTML = '<div class="h2h-title">Últimos encontros</div>' +
+      matches.map(function(r){
+        return '<div class="h2h-match">'+
+          '<div><div>'+r.home+'</div><div class="h2h-date">'+r.date+'</div><div class="h2h-comp">'+r.comp+'</div></div>'+
+          '<div class="h2h-score">'+r.score+'</div>'+
+          '<div style="text-align:right"><div>'+r.away+'</div></div>'+
+        '</div>';
+      }).join('');
+  }
+
+  // ── Tenta api-football.com (dados completos incl. amigáveis) ──
+  var useAf = APIFOOTBALL_KEY && !APIFOOTBALL_KEY.startsWith('COLE');
+  if (useAf && homeTeam && awayTeam) {
+    try {
+      var ids = await Promise.all([getAfTeamId(homeTeam), getAfTeamId(awayTeam)]);
+      var res = await afFetch('fixtures/headtohead?h2h='+ids[0]+'-'+ids[1]+'&last=5');
+      if (!res.ok) throw new Error('HTTP '+res.status);
+      var data = await res.json();
+      var finished = ['FT','AET','PEN'];
+      var fixtures = (data.response||[]).filter(function(f){ return finished.indexOf(f.fixture.status.short) !== -1; });
+      renderH2HMatches(fixtures.map(function(f){
+        var gh = f.goals.home, ga = f.goals.away;
+        return {
+          home:  f.teams.home.name,
+          away:  f.teams.away.name,
+          score: (gh !== null && ga !== null) ? gh+' – '+ga : '?',
+          date:  f.fixture.date ? new Date(f.fixture.date).toLocaleDateString('pt-PT',{day:'numeric',month:'short',year:'numeric'}) : '',
+          comp:  f.league.name
+        };
+      }));
+      return;
+    } catch(e) { console.warn('api-football H2H:', e.message); }
+  }
+
+  // ── Fallback: football-data.org ──
+  wcFetch('matches/'+matchId+'/head2head?limit=5').then(function(res){
     if (!res.ok) throw new Error('HTTP '+res.status);
     return res.json();
   }).then(function(data){
-    var matches = (data.matches||[]).filter(function(m){ return m.status==='FINISHED'||m.status==='FULL_TIME'; });
-    if (!matches.length) { panel.innerHTML = '<div class="h2h-title">Histórico</div><div style="font-size:11px;color:var(--text3)">Sem encontros anteriores registados.</div>'; return; }
-    panel.innerHTML = '<div class="h2h-title">Últimos encontros</div>' +
-      matches.map(function(m){
-        var sc = m.score && m.score.fullTime;
-        var scoreStr = sc ? sc.home+' – '+sc.away : '?';
-        var dateStr = m.utcDate ? new Date(m.utcDate).toLocaleDateString('pt-PT',{day:'numeric',month:'short',year:'numeric'}) : '';
-        var comp = m.competition ? m.competition.name : '';
-        return '<div class="h2h-match">'+
-          '<div><div>'+m.homeTeam.name+'</div><div class="h2h-date">'+dateStr+'</div><div class="h2h-comp">'+comp+'</div></div>'+
-          '<div class="h2h-score">'+scoreStr+'</div>'+
-          '<div style="text-align:right"><div>'+m.awayTeam.name+'</div></div>'+
-        '</div>';
-      }).join('');
-  }).catch(function(){ panel.innerHTML = '<div class="h2h-title">Histórico</div><div style="font-size:11px;color:var(--text3)">Não disponível.</div>'; });
+    var matches = (data.matches||[]).filter(function(m){ return m.status==='FINISHED'; });
+    renderH2HMatches(matches.map(function(m){
+      var sc = m.score && m.score.fullTime;
+      return {
+        home:  m.homeTeam.name,
+        away:  m.awayTeam.name,
+        score: (sc && sc.home !== null) ? sc.home+' – '+sc.away : '?',
+        date:  m.utcDate ? new Date(m.utcDate).toLocaleDateString('pt-PT',{day:'numeric',month:'short',year:'numeric'}) : '',
+        comp:  m.competition ? m.competition.name : ''
+      };
+    }));
+  }).catch(function(e){ panel.innerHTML = '<div class="h2h-title">Histórico</div><div style="font-size:11px;color:var(--text3)">Não disponível.</div>'; });
 }
 
 /* ══ Match rendering ══ */
@@ -893,7 +964,7 @@ function renderMatch(m) {
     '<div id="pred-'+mid+'"></div>'+
     '</div>'+
     (m.venue ? '<div class="match-footer"><span class="match-detail">&#x1F3DF;&#xFE0F; '+m.venue+'</span></div>' : '')+
-    '<button class="h2h-btn" onclick="toggleH2H(\''+mid+'\')">📊 Último encontro entre estas equipas</button>'+
+    '<button class="h2h-btn" onclick="toggleH2H(\''+mid+'\','+JSON.stringify(home)+','+JSON.stringify(away)+')">📊 Último encontro entre estas equipas</button>'+
     '<div class="h2h-panel" id="h2h-'+mid+'"></div>'+
   '</div>';
 }
