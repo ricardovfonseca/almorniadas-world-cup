@@ -716,7 +716,7 @@ async function loadNews() {
   async function fetchRss(url) {
     var proxies = [
       'https://corsproxy.io/?' + encodeURIComponent(url),
-      'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+      'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url),
     ];
     for (var i = 0; i < proxies.length; i++) {
       try {
@@ -964,7 +964,7 @@ function renderMatch(m) {
     '<div id="pred-'+mid+'"></div>'+
     '</div>'+
     (m.venue ? '<div class="match-footer"><span class="match-detail">&#x1F3DF;&#xFE0F; '+m.venue+'</span></div>' : '')+
-    '<button class="h2h-btn" onclick="toggleH2H(\''+mid+'\','+JSON.stringify(home)+','+JSON.stringify(away)+')">📊 Último encontro entre estas equipas</button>'+
+    '<button class="h2h-btn" data-home="'+home.replace(/"/g,'&quot;')+'" data-away="'+away.replace(/"/g,'&quot;')+'" onclick="toggleH2H(\''+mid+'\',this.dataset.home,this.dataset.away)">📊 Último encontro entre estas equipas</button>'+
     '<div class="h2h-panel" id="h2h-'+mid+'"></div>'+
   '</div>';
 }
