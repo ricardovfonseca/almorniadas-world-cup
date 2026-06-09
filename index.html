@@ -337,7 +337,13 @@ async function loadUserPredictions() {
     var doc = await fbDb.collection('predictions').doc(currentUser.uid).get();
     if (doc.exists) {
       var d = doc.data();
-      userPredictions.matches    = d.matches    || {};
+      // Handle nested structure { matches: { "id": {...} } }
+      var matchesData = (d.matches && typeof d.matches === 'object') ? d.matches : {};
+      // Also recover legacy flat keys "matches.417478" (saved by incorrect set() usage)
+      Object.keys(d).forEach(function(k) {
+        if (k.startsWith('matches.')) { matchesData[k.slice(8)] = d[k]; }
+      });
+      userPredictions.matches    = matchesData;
       userPredictions.tournament = d.tournament || {};
     }
     // save user profile
@@ -352,10 +358,19 @@ async function loadUserPredictions() {
 
 async function saveMatchPrediction(matchId, home, away) {
   if (!fbDb || !currentUser) return;
-  var key = 'matches.' + matchId;
-  var update = {};
-  update[key] = { home: home, away: away, updatedAt: new Date().toISOString() };
-  await fbDb.collection('predictions').doc(currentUser.uid).set(update, { merge: true });
+  var ref = fbDb.collection('predictions').doc(currentUser.uid);
+  var value = { home: home, away: away, updatedAt: new Date().toISOString() };
+  var updateData = {};
+  updateData['matches.' + matchId] = value;
+  try {
+    // update() correctly treats "matches.ID" as a nested field path
+    await ref.update(updateData);
+  } catch(e) {
+    // Document doesn't exist yet — create it
+    var initData = { matches: {}, tournament: {} };
+    initData.matches[String(matchId)] = value;
+    await ref.set(initData);
+  }
   if (!userPredictions.matches) userPredictions.matches = {};
   userPredictions.matches[String(matchId)] = { home: home, away: away };
 }
