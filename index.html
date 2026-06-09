@@ -483,7 +483,10 @@ function showSection(id) {
   document.querySelectorAll('.nav-btn').forEach(function(b){b.classList.remove('active')});
   document.getElementById('sec-'+id).classList.add('active');
   document.getElementById('nav-'+id).classList.add('active');
-  if (id === 'matches') loadMatches();
+  if (id === 'matches') {
+    loadMatches();
+    if (currentUser) loadUserPredictions().then(function(){ refreshPredPanels(); });
+  }
   if (id === 'ranking') loadRanking();
 }
 
@@ -1062,14 +1065,15 @@ async function loadRanking() {
         var isMe = s.uid === currentUser.uid;
         var photo = s.photo ? '<img class="ranking-avatar" src="'+s.photo+'" onerror="this.style.display=\'none\'">' : '<div class="ranking-avatar" style="background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:16px">👤</div>';
         var bonusNote = s.bonusPts > 0 ? ' + '+s.bonusPts+' bónus' : '';
-        return '<div class="ranking-item'+(isMe?' ranking-you':'')+'">'+
+        var sep = (i === 2 && scores.length > 3) ? '<div style="border-top:1px dashed var(--border);margin:6px 0;opacity:.5"></div>' : '';
+        return sep + '<div class="ranking-item'+(isMe?' ranking-you':'')+'">'+
           '<div class="ranking-pos '+posClass+'">'+(i+1)+'</div>'+
           photo+
           '<div class="ranking-info">'+
             '<div class="ranking-name">'+s.name+(isMe?' (tu)':'')+'</div>'+
             '<div class="ranking-detail">'+s.matchPts+' pts em jogos'+bonusNote+(s.matchCount?' · '+s.matchCount+' jogos':'')+'</div>'+
           '</div>'+
-          '<div class="ranking-pts"><div class="ranking-pts-val">'+s.total+'</div><div class="ranking-pts-lbl">pontos</div></div>'+
+          '<div class="ranking-pts"><div class="ranking-pts-val" style="font-size:'+(i<3?'24px':'20px')+'">'+s.total+'</div><div class="ranking-pts-lbl">pontos</div></div>'+
         '</div>';
       }).join('')+
     '</div>';
