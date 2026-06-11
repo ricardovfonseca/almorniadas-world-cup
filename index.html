@@ -1220,9 +1220,8 @@ function getUserName(uid, c) {
   var u = c.usersMap[uid];
   if (u) {
     var n = u.displayName || u.name || u.email || '';
-    if (n) return n.split(' ')[0];
+    if (n) return n;
   }
-  // fallback: try to find name from allPreds metadata
   return uid.slice(0,6)+'…';
 }
 
