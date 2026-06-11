@@ -1242,12 +1242,15 @@ function buildMissingUsersAlert(c) {
   var todayKey    = lisbonDateKey(now);
   var d2 = new Date(now); d2.setDate(d2.getDate()+1);
   var tomorrowKey = lisbonDateKey(d2);
-  // Collect upcoming matches (not started) for today+tomorrow
+  // Incluir amanhã apenas se ainda for antes do meio-dia de Lisboa
+  var lisbonHour = parseInt(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',hour:'2-digit',hour12:false}).format(now));
+  var includeTomorrow = lisbonHour < 12;
+  // Collect upcoming matches (not started) for today + amanhã (só antes do meio-dia)
   var upcomingMatches = [];
   (c.allMatchesList||[]).forEach(function(m){
     if (!m.utcDate) return;
     var key = lisbonDateKey(new Date(m.utcDate));
-    if (key !== todayKey && key !== tomorrowKey) return;
+    if (key !== todayKey && (key !== tomorrowKey || !includeTomorrow)) return;
     var started = ['IN_PLAY','PAUSED','FINISHED','FULL_TIME'].indexOf(m.status) >= 0;
     if (started || new Date() >= new Date(m.utcDate)) return;
     upcomingMatches.push(m);
