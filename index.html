@@ -255,11 +255,17 @@
     <div class="section-actions"><button class="refresh-btn" onclick="loadRanking()">↻ Atualizar</button></div>
     <div id="ranking-content"><div class="loading"><div class="loading-spinner"></div><div>A carregar ranking...</div></div></div>
   </section>
+  <section class="section" id="sec-palpites">
+    <div class="section-header"><h2>🎯 Palpites</h2><p>Palpites de todos os jogadores</p></div>
+    <div class="section-actions"><button class="refresh-btn" onclick="loadPalpites()">↻ Atualizar</button></div>
+    <div id="palpites-content"><div class="loading"><div class="loading-spinner"></div><div>A carregar...</div></div></div>
+  </section>
 </main>
 <nav>
   <button class="nav-btn active" id="nav-dashboard" onclick="showSection('dashboard')"><span class="nav-icon">📊</span><span>Dashboard</span></button>
   <button class="nav-btn" id="nav-matches" onclick="showSection('matches')"><span class="nav-icon">⚽</span><span>Jogos</span></button>
   <button class="nav-btn" id="nav-ranking" onclick="showSection('ranking')"><span class="nav-icon">🏅</span><span>Ranking</span></button>
+  <button class="nav-btn" id="nav-palpites" onclick="showSection('palpites')"><span class="nav-icon">🎯</span><span>Palpites</span></button>
 </nav>
 <script>
 
@@ -507,6 +513,7 @@ function showSection(id) {
     if (currentUser) loadUserPredictions().then(function(){ refreshPredPanels(); });
   }
   if (id === 'ranking') loadRanking();
+  if (id === 'palpites') loadPalpites();
 }
 
 function formatDate(d) {
@@ -515,6 +522,14 @@ function formatDate(d) {
   return days[d.getDay()]+', '+d.getDate()+' '+months[d.getMonth()];
 }
 var today = new Date();
+
+/* ── Shared helpers ── */
+function lisbonDateKey(d) {
+  return new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Lisbon',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
+}
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 var countdownInterval = null;
 function pad(n){return String(n).padStart(2,'0')}
@@ -983,10 +998,6 @@ async function loadMatches() {
   container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>A carregar jogos...</div></div>';
   var now = new Date();
 
-  // Helper: YYYY-MM-DD of a Date in Lisbon timezone (handles DST correctly)
-  function lisbonDateKey(d) {
-    return new Intl.DateTimeFormat('en-CA', {timeZone:'Europe/Lisbon',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
-  }
   var todayKey    = lisbonDateKey(now);
   var d2 = new Date(now); d2.setDate(d2.getDate()+1);
   var tomorrowKey = lisbonDateKey(d2);
@@ -1054,6 +1065,238 @@ async function loadMatches() {
     console.error(err);
     container.innerHTML='<div class="empty-state"><div class="empty-icon">⚠️</div><p><strong>Erro ao carregar jogos.</strong><br><span style="font-size:11px;color:var(--text3)">'+err.message+'</span></p></div>';
   }
+}
+
+/* ══ Palpites ══ */
+var palpitesCache = null;
+var palpitesView  = 'byMatch';
+
+async function loadPalpites() {
+  var container = document.getElementById('palpites-content');
+  if (!container) return;
+  if (!currentUser) {
+    container.innerHTML='<div class="empty-state"><div class="empty-icon">🔒</div><p><span onclick="signInWithGoogle()" style="color:var(--accent);cursor:pointer;font-weight:700;text-decoration:underline">Entra</span> para ver os palpites</p></div>';
+    return;
+  }
+  container.innerHTML='<div class="loading"><div class="loading-spinner"></div><div>A verificar acesso...</div></div>';
+  try {
+    var accessDoc = await fbDb.collection('palpites').doc(currentUser.uid).get();
+    if (!accessDoc.exists) {
+      container.innerHTML='<div class="empty-state"><div class="empty-icon">🚫</div><p>Não tens acesso a esta secção.<br><span style="font-size:12px;color:var(--text3)">Pede ao administrador para te adicionar.</span></p></div>';
+      return;
+    }
+    container.innerHTML='<div class="loading"><div class="loading-spinner"></div><div>A carregar palpites...</div></div>';
+    var predsSnap = await fbDb.collection('predictions').get();
+    var allPreds  = {};
+    predsSnap.forEach(function(doc){ allPreds[doc.id]=doc.data(); });
+    var usersSnap = await fbDb.collection('users').get();
+    var usersMap  = {};
+    usersSnap.forEach(function(doc){ usersMap[doc.id]=doc.data(); });
+    var matchesMap = {};
+    try {
+      var mRes = await wcFetch('competitions/WC/matches');
+      if (mRes.ok) { var mData=await mRes.json(); (mData.matches||[]).forEach(function(m){ matchesMap[String(m.id)]=m; }); }
+    } catch(e){ console.warn('palpites matches:', e); }
+    palpitesCache = { allPreds:allPreds, usersMap:usersMap, matchesMap:matchesMap };
+    renderPalpitesUI(container);
+  } catch(e) {
+    console.error('loadPalpites:', e);
+    container.innerHTML='<div class="empty-state"><div class="empty-icon">⚠️</div><p>Erro ao carregar palpites.</p></div>';
+  }
+}
+
+function palpitesSetView(view) {
+  palpitesView = view;
+  var container = document.getElementById('palpites-content');
+  if (container && palpitesCache) renderPalpitesUI(container);
+}
+
+function renderPalpitesUI(container) {
+  var c = palpitesCache;
+  var btnBase = 'flex:1;padding:9px;border-radius:10px;border:none;font-size:13px;font-weight:700;cursor:pointer;transition:all .2s;';
+  var toggle =
+    '<div style="display:flex;gap:8px;padding:16px 16px 0">'+
+      '<button onclick="palpitesSetView(\'byMatch\')" style="'+btnBase+(palpitesView==='byMatch'?'background:var(--accent);color:#000':'background:var(--card2);color:var(--text2)')+'">⚽ Por Jogo</button>'+
+      '<button onclick="palpitesSetView(\'byUser\')" style="'+btnBase+(palpitesView==='byUser'?'background:var(--accent);color:#000':'background:var(--card2);color:var(--text2)')+'">👤 Por Utilizador</button>'+
+    '</div>';
+  var tourTable = renderTournamentPalpites(c.allPreds, c.usersMap);
+  var main = palpitesView==='byMatch'
+    ? renderPalpitesByMatch(c.allPreds, c.usersMap, c.matchesMap)
+    : renderPalpitesByUser(c.allPreds, c.usersMap, c.matchesMap);
+  container.innerHTML = toggle + tourTable + main;
+}
+
+function renderTournamentPalpites(allPreds, usersMap) {
+  var uids = Object.keys(allPreds).filter(function(uid){
+    var t=allPreds[uid].tournament||{}; return t.champion||t.topScorer||t.mvp;
+  });
+  if (!uids.length) return '<div style="padding:16px;font-size:12px;color:var(--text3);text-align:center">Sem palpites de torneio ainda.</div>';
+  var rows = uids.map(function(uid){
+    var t=allPreds[uid].tournament||{}, u=usersMap[uid]||{};
+    var correctChampion  = ACTUAL_CHAMPION   && t.champion  && t.champion.trim().toLowerCase()===ACTUAL_CHAMPION.toLowerCase();
+    var correctScorer    = ACTUAL_TOP_SCORER && t.topScorer && t.topScorer.trim().toLowerCase()===ACTUAL_TOP_SCORER.toLowerCase();
+    var correctMvp       = ACTUAL_MVP        && t.mvp       && t.mvp.trim().toLowerCase()===ACTUAL_MVP.toLowerCase();
+    function cell(val, correct){
+      return '<td style="padding:8px 6px;font-size:12px;color:'+(correct?'var(--green)':'var(--text2)')+'">'+escHtml(val||'—')+(correct?' ✓':'')+'</td>';
+    }
+    return '<tr style="border-top:1px solid var(--border)">'+
+      '<td style="padding:8px 6px;white-space:nowrap"><div style="display:flex;align-items:center;gap:6px">'+
+        (u.photo?'<img src="'+escHtml(u.photo)+'" style="width:24px;height:24px;border-radius:50%;flex-shrink:0">'
+          :'<div style="width:24px;height:24px;border-radius:50%;background:var(--bg3);flex-shrink:0"></div>')+
+        '<span style="font-size:12px;font-weight:600">'+escHtml(u.name||'?')+'</span>'+
+      '</div></td>'+
+      cell(t.champion,correctChampion)+cell(t.topScorer,correctScorer)+cell(t.mvp,correctMvp)+
+    '</tr>';
+  }).join('');
+  return '<div class="card" style="overflow-x:auto;padding:14px;margin-top:12px">'+
+    '<div class="card-title" style="margin-bottom:10px"><span class="icon">🏆</span> Palpites de Torneio</div>'+
+    '<table style="width:100%;border-collapse:collapse;min-width:300px">'+
+      '<thead><tr>'+
+        '<th style="text-align:left;padding:4px 6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Utilizador</th>'+
+        '<th style="text-align:left;padding:4px 6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Campeão</th>'+
+        '<th style="text-align:left;padding:4px 6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Marcador</th>'+
+        '<th style="text-align:left;padding:4px 6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">MVP</th>'+
+      '</tr></thead>'+
+      '<tbody>'+rows+'</tbody>'+
+    '</table>'+
+  '</div>';
+}
+
+function renderPalpitesByMatch(allPreds, usersMap, matchesMap) {
+  var midSet = {};
+  Object.keys(allPreds).forEach(function(uid){ Object.keys(allPreds[uid].matches||{}).forEach(function(mid){ midSet[mid]=true; }); });
+  var mids = Object.keys(midSet);
+  if (!mids.length) return '<div style="padding:20px;text-align:center;font-size:13px;color:var(--text3)">Ainda não há palpites de jogos.</div>';
+
+  var byDate = {};
+  mids.forEach(function(mid){
+    var m=matchesMap[mid];
+    var key = m&&m.utcDate ? lisbonDateKey(new Date(m.utcDate)) : '9999-TBD';
+    if (!byDate[key]) byDate[key]=[];
+    byDate[key].push(mid);
+  });
+  Object.keys(byDate).forEach(function(k){
+    byDate[k].sort(function(a,b){ return ((matchesMap[a]&&matchesMap[a].utcDate)||'') < ((matchesMap[b]&&matchesMap[b].utcDate)||'') ? -1 : 1; });
+  });
+
+  var todayKey=lisbonDateKey(new Date()), d2=new Date(); d2.setDate(d2.getDate()+1); var tomorrowKey=lisbonDateKey(d2);
+
+  return Object.keys(byDate).sort().map(function(dateKey){
+    var label = dateKey==='9999-TBD' ? 'Data TBD'
+      : dateKey===todayKey ? 'Hoje'
+      : dateKey===tomorrowKey ? 'Amanhã'
+      : new Date(dateKey+'T12:00:00').toLocaleDateString('pt-PT',{weekday:'long',day:'numeric',month:'long'});
+    return '<div style="padding:12px 16px 4px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1.5px">'+escHtml(label)+'</div></div>'+
+      byDate[dateKey].map(function(mid){ return renderMatchPalpitesCard(mid, allPreds, usersMap, matchesMap); }).join('');
+  }).join('');
+}
+
+function renderMatchPalpitesCard(mid, allPreds, usersMap, matchesMap) {
+  var m=matchesMap[mid];
+  var homeTeam = m&&m.homeTeam ? (m.homeTeam.shortName||m.homeTeam.name||'?') : '?';
+  var awayTeam = m&&m.awayTeam ? (m.awayTeam.shortName||m.awayTeam.name||'?') : '?';
+  var kickoff  = m&&m.utcDate ? new Date(m.utcDate).toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Lisbon'}) : '';
+  var isFinished = m&&(m.status==='FINISHED'||m.status==='FULL_TIME');
+  var actualH = isFinished&&m.score&&m.score.fullTime&&m.score.fullTime.home!==null ? m.score.fullTime.home : null;
+  var actualA = isFinished&&m.score&&m.score.fullTime ? m.score.fullTime.away : null;
+  var group   = m&&m.group ? m.group.replace('GROUP_','Grupo ') : 'Mundial 2026';
+
+  var preds = Object.keys(allPreds).map(function(uid){
+    var p=(allPreds[uid].matches||{})[mid]; if (!p) return null;
+    var pts = actualH!==null ? calcMatchPoints(p,{home:actualH,away:actualA}) : null;
+    return {uid:uid, user:usersMap[uid]||{}, pred:p, pts:pts};
+  }).filter(Boolean);
+  if (!preds.length) return '';
+
+  function ptsBadge(pts) {
+    if (pts===null) return '';
+    var bg = pts===3?'rgba(0,201,167,.2);color:var(--accent)':pts>0?'rgba(255,215,0,.15);color:var(--gold)':'rgba(255,71,87,.1);color:var(--red)';
+    return '<span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:20px;background:'+bg+'">'+pts+'pt'+(pts!==1?'s':'')+'</span>';
+  }
+
+  var actualScoreHtml = actualH!==null
+    ? '<span style="color:var(--green);font-weight:700;font-size:13px">'+actualH+' – '+actualA+'</span>'
+    : '<span style="color:var(--text3);font-size:12px">'+escHtml(kickoff)+'</span>';
+
+  var rows = preds.map(function(r){
+    return '<div style="display:flex;align-items:center;padding:8px 0;border-top:1px solid rgba(45,66,102,.5)">'+
+      '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">'+
+        (r.user.photo?'<img src="'+escHtml(r.user.photo)+'" style="width:28px;height:28px;border-radius:50%;flex-shrink:0">'
+          :'<div style="width:28px;height:28px;border-radius:50%;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">👤</div>')+
+        '<span style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(r.user.name||'Utilizador')+'</span>'+
+        ' '+ptsBadge(r.pts)+
+      '</div>'+
+      '<div style="font-size:18px;font-weight:800;font-family:monospace;color:var(--accent);flex-shrink:0;margin-left:8px">'+r.pred.home+' – '+r.pred.away+'</div>'+
+    '</div>';
+  }).join('');
+
+  return '<div class="card" style="margin-bottom:12px">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">'+
+      '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
+        flagImg(homeTeam,20)+'<span style="font-size:13px;font-weight:700">'+escHtml(homeTeam)+'</span>'+
+        '<span style="color:var(--text3);font-size:11px">vs</span>'+
+        '<span style="font-size:13px;font-weight:700">'+escHtml(awayTeam)+'</span>'+flagImg(awayTeam,20)+
+      '</div>'+
+      actualScoreHtml+
+    '</div>'+
+    '<div style="font-size:10px;color:var(--text3);margin-bottom:8px">'+escHtml(group)+'</div>'+
+    rows+
+  '</div>';
+}
+
+function renderPalpitesByUser(allPreds, usersMap, matchesMap) {
+  var uids = Object.keys(allPreds).filter(function(uid){ return Object.keys(allPreds[uid].matches||{}).length>0; });
+  if (!uids.length) return '<div style="padding:20px;text-align:center;font-size:13px;color:var(--text3)">Ainda não há palpites de jogos.</div>';
+
+  uids.sort(function(a,b){ return Object.keys(allPreds[b].matches||{}).length - Object.keys(allPreds[a].matches||{}).length; });
+
+  return '<div style="margin-top:4px">'+uids.map(function(uid){
+    var pred=allPreds[uid], user=usersMap[uid]||{};
+    var matchPreds=pred.matches||{}, mids=Object.keys(matchPreds);
+    var totalPts=0;
+    mids.forEach(function(mid){
+      var m=matchesMap[mid];
+      if (!m||!m.score||!m.score.fullTime||m.score.fullTime.home===null) return;
+      var pts=calcMatchPoints(matchPreds[mid],{home:m.score.fullTime.home,away:m.score.fullTime.away});
+      if (pts!==null) totalPts+=pts;
+    });
+    mids.sort(function(a,b){ return ((matchesMap[a]&&matchesMap[a].utcDate)||'')<((matchesMap[b]&&matchesMap[b].utcDate)||'')?-1:1; });
+
+    var predRows = mids.map(function(mid){
+      var m=matchesMap[mid], p=matchPreds[mid];
+      var ht=m&&m.homeTeam?(m.homeTeam.shortName||m.homeTeam.name||mid):mid;
+      var at=m&&m.awayTeam?(m.awayTeam.shortName||m.awayTeam.name||'?'):'?';
+      var fin=m&&(m.status==='FINISHED'||m.status==='FULL_TIME');
+      var actual=fin&&m.score&&m.score.fullTime&&m.score.fullTime.home!==null?m.score.fullTime:null;
+      var pts=actual?calcMatchPoints(p,{home:actual.home,away:actual.away}):null;
+      var bg=pts===3?'rgba(0,201,167,.2);color:var(--accent)':pts>0?'rgba(255,215,0,.15);color:var(--gold)':'rgba(255,71,87,.1);color:var(--red)';
+      var ptsHtml=pts!==null?'<span style="font-size:11px;padding:1px 5px;border-radius:10px;background:'+bg+'">'+pts+'pts</span>':'';
+      var actualHtml=actual?' <span style="color:var(--text3);font-size:11px">('+actual.home+'-'+actual.away+')</span>':'';
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-top:1px solid rgba(45,66,102,.4)">'+
+        '<div style="font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">'+
+          flagImg(ht,15)+' '+escHtml(ht)+' <span style="color:var(--text3)">vs</span> '+escHtml(at)+' '+flagImg(at,15)+escHtml(actualHtml)+
+        '</div>'+
+        '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:8px">'+
+          ptsHtml+
+          '<span style="font-weight:700;color:var(--accent);font-family:monospace;font-size:14px">'+p.home+' – '+p.away+'</span>'+
+        '</div>'+
+      '</div>';
+    }).join('');
+
+    return '<div class="card" style="margin-bottom:12px">'+
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'+
+        (user.photo?'<img src="'+escHtml(user.photo)+'" style="width:44px;height:44px;border-radius:50%;border:2px solid var(--accent);flex-shrink:0">'
+          :'<div style="width:44px;height:44px;border-radius:50%;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">👤</div>')+
+        '<div style="min-width:0">'+
+          '<div style="font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(user.name||'Utilizador')+'</div>'+
+          '<div style="font-size:11px;color:var(--text3)">'+mids.length+' palpite'+(mids.length!==1?'s':'')+
+            (totalPts>0?' · <span style="color:var(--accent);font-weight:700">'+totalPts+' pts</span>':'')+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+      predRows+
+    '</div>';
+  }).join('')+'</div>';
 }
 
 /* ══ Ranking ══ */
