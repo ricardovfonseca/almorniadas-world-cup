@@ -1105,6 +1105,15 @@ async function loadPalpites() {
   }
 }
 
+function togglePalpitesUser(safeUid) {
+  var el = document.getElementById('puser-'+safeUid);
+  var arrow = document.getElementById('uarr-'+safeUid);
+  if (!el) return;
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  if (arrow) arrow.textContent = open ? '▶' : '▼';
+}
+
 function togglePalpitesMatch(safeId) {
   var el = document.getElementById('pmatch-'+safeId);
   var arrow = document.getElementById('parr-'+safeId);
@@ -1300,18 +1309,20 @@ function renderPalpitesByUser(allPreds, usersMap, matchesMap) {
       '</div>';
     }).join('');
 
-    return '<div class="card" style="margin-bottom:12px">'+
-      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'+
+    var safeUid = uid.replace(/[^a-zA-Z0-9]/g,'_');
+    return '<div class="card" style="margin-bottom:12px;cursor:pointer" onclick="togglePalpitesUser(\''+safeUid+'\')">'+
+      '<div style="display:flex;align-items:center;gap:10px">'+
         (user.photo?'<img src="'+escHtml(user.photo)+'" style="width:44px;height:44px;border-radius:50%;border:2px solid var(--accent);flex-shrink:0">'
           :'<div style="width:44px;height:44px;border-radius:50%;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">👤</div>')+
-        '<div style="min-width:0">'+
+        '<div style="min-width:0;flex:1">'+
           '<div style="font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(user.name||'Utilizador')+'</div>'+
           '<div style="font-size:11px;color:var(--text3)">'+mids.length+' palpite'+(mids.length!==1?'s':'')+
             (totalPts>0?' · <span style="color:var(--accent);font-weight:700">'+totalPts+' pts</span>':'')+
           '</div>'+
         '</div>'+
+        '<span id="uarr-'+safeUid+'" style="color:var(--text3);font-size:12px;flex-shrink:0">▶</span>'+
       '</div>'+
-      predRows+
+      '<div id="puser-'+safeUid+'" style="display:none">'+predRows+'</div>'+
     '</div>';
   }).join('')+'</div>';
 }
