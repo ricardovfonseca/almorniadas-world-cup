@@ -981,16 +981,31 @@ function renderMatch(m) {
 async function loadMatches() {
   var container = document.getElementById('matches-list');
   container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>A carregar jogos...</div></div>';
-  var dateStr = today.toISOString().split('T')[0];
+  // Use current date (recalculated each call, not stale page-load value)
+  var now = new Date();
+  // Local date string (e.g. "2026-06-11") — used for filtering
+  var localDateStr = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+  // UTC date range: query today + tomorrow UTC to catch late US games that fall on next UTC day
+  var utcDateStr = now.toISOString().split('T')[0];
+  var nextUtc = new Date(now); nextUtc.setUTCDate(nextUtc.getUTCDate()+1);
+  var nextUtcStr = nextUtc.toISOString().split('T')[0];
   try {
-    var res = await wcFetch('competitions/WC/matches?dateFrom='+dateStr+'&dateTo='+dateStr);
+    var res = await wcFetch('competitions/WC/matches?dateFrom='+utcDateStr+'&dateTo='+nextUtcStr);
     if (res.status===401){container.innerHTML='<div class="empty-state"><p><strong>Chave API inválida.</strong></p></div>';return}
     if (res.status===403){container.innerHTML='<div class="empty-state"><p><strong>Acesso negado.</strong></p></div>';return}
     if (res.status===429){container.innerHTML='<div class="empty-state"><p><strong>Muitos pedidos. Aguarda.</strong></p></div>';return}
     if (!res.ok) throw new Error('HTTP '+res.status);
     var data = await res.json();
-    if (!data.matches||!data.matches.length) {
-      var future=new Date(today); future.setDate(future.getDate()+30);
+    // Filter to matches that are "today" in the user's local timezone
+    var todayMatches = (data.matches||[]).filter(function(m){
+      if (!m.utcDate) return false;
+      var d = new Date(m.utcDate);
+      var localD = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      return localD === localDateStr;
+    });
+    var dateStr = utcDateStr; // keep for fallback
+    if (!todayMatches.length) {
+      var future=new Date(now); future.setDate(future.getDate()+30);
       var upRes=await wcFetch('competitions/WC/matches?dateFrom='+dateStr+'&dateTo='+future.toISOString().split('T')[0]+'&status=SCHEDULED');
       if (!upRes.ok) throw new Error('HTTP '+upRes.status);
       var upData=await upRes.json();
@@ -1008,7 +1023,7 @@ async function loadMatches() {
             '</div></div>'+matches.map(renderMatch).join('');
         }).join('');
     } else {
-      container.innerHTML = data.matches.map(renderMatch).join('');
+      container.innerHTML = todayMatches.map(renderMatch).join('');
     }
     refreshPredPanels();
   } catch(err) {
