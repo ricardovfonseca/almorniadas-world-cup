@@ -1174,7 +1174,18 @@ async function loadPalpites() {
     container.innerHTML='<div class="loading"><div class="loading-spinner"></div><div>A carregar palpites...</div></div>';
     var predsSnap = await fbDb.collection('predictions').get();
     var allPreds  = {};
-    predsSnap.forEach(function(doc){ allPreds[doc.id]=doc.data(); });
+    predsSnap.forEach(function(doc){
+      var d = doc.data();
+      // Normalize flat keys (matches.ID) into nested matches object
+      var matchesData = (d.matches && typeof d.matches === 'object') ? Object.assign({}, d.matches) : {};
+      Object.keys(d).forEach(function(k){
+        if (k.startsWith('matches.')) {
+          var mid = k.slice(8);
+          if (!matchesData[mid]) matchesData[mid] = d[k];
+        }
+      });
+      allPreds[doc.id] = Object.assign({}, d, { matches: matchesData });
+    });
     var usersSnap = await fbDb.collection('users').get();
     var usersMap  = {};
     usersSnap.forEach(function(doc){ usersMap[doc.id]=doc.data(); });
