@@ -34,6 +34,9 @@
     @keyframes varShake{0%,100%{transform:translateX(0)}10%,30%,50%,70%,90%{transform:translateX(-3px)}20%,40%,60%,80%{transform:translateX(3px)}}
     .var-alert{margin:12px 16px 4px;padding:16px;background:linear-gradient(135deg,rgba(255,71,87,.12),rgba(255,107,53,.1));border:1.5px solid rgba(255,71,87,.55);border-radius:14px;animation:varGlow 2s ease-in-out infinite;position:relative;overflow:hidden;cursor:default}
     .var-alert::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--red),#ff6b35,var(--red));background-size:200% 100%;animation:shimmer 2s linear infinite}
+    @keyframes amberGlow{0%,100%{box-shadow:0 0 0 0 rgba(217,119,6,.3),0 4px 16px rgba(217,119,6,.08)}50%{box-shadow:0 0 0 6px rgba(217,119,6,0),0 4px 24px rgba(217,119,6,.25)}}
+    .missing-alert{margin:12px 16px 4px;padding:14px 16px;background:linear-gradient(135deg,rgba(253,230,138,.18),rgba(251,191,36,.1));border:1.5px solid rgba(217,119,6,.5);border-radius:14px;animation:amberGlow 2.5s ease-in-out infinite;position:relative;overflow:hidden;cursor:default;text-align:center}
+    .missing-alert::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#f59e0b,#fcd34d,#f59e0b);background-size:200% 100%;animation:shimmer 2s linear infinite}
     @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
     nav{position:fixed;bottom:0;left:0;right:0;background:var(--bg2);border-top:1px solid var(--border);display:flex;z-index:100;padding-bottom:env(safe-area-inset-bottom)}
     .nav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 4px;cursor:pointer;background:none;border:none;color:var(--text3);font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;transition:color .2s;position:relative}
@@ -237,6 +240,7 @@
 <main>
   <section class="section active" id="sec-dashboard">
     <div class="section-header"><h2>📊 Dashboard</h2><p>Estatísticas e previsões</p></div>
+    <div id="dashboard-pred-alert"></div>
     <div class="pt-card" id="pt-next-card"></div>
     <div class="card picks-card" id="picks-card">
       <div class="card-title"><span class="icon">🎯</span> Os meus palpites de torneio</div>
@@ -312,7 +316,7 @@ if (fbAuth) {
     currentUser = user;
     renderAuthArea();
     if (user) {
-      loadUserPredictions().then(function(){ refreshPredPanels(); renderPicksCard(); });
+      loadUserPredictions().then(function(){ refreshPredPanels(); renderPicksCard(); loadDashboardPredAlert(); });
     } else {
       userPredictions = { matches:{}, tournament:{} };
       refreshPredPanels();
@@ -519,6 +523,7 @@ function showSection(id) {
   }
   if (id === 'ranking') loadRanking();
   if (id === 'palpites') loadPalpites();
+  if (id === 'dashboard') loadDashboardPredAlert();
 }
 
 function formatDate(d) {
@@ -998,6 +1003,48 @@ function renderMatch(m) {
 }
 
 /* ══ Load matches ══ */
+function buildPredAlertHtml(n) {
+  return '<div class="var-alert">'+
+    '<div style="font-size:28px;margin-bottom:8px;animation:varShake 0.6s ease-in-out 1s 3">📺</div>'+
+    '<div style="font-size:14px;font-weight:900;color:var(--red);letter-spacing:.5px;margin-bottom:8px;text-transform:uppercase">O VAR está em revisão...</div>'+
+    '<div style="font-size:13px;color:var(--text);line-height:1.6">'+
+      'Não encontrámos palpites teus para os jogos de hoje e/ou amanhã.<br>'+
+      'Após análise de vídeo, o Hugo e o Cajó dizem que és oficialmente o elemento mais BURRO e Atrasado Mental deste grupo.'+
+    '</div>'+
+    '<div style="margin-top:12px;display:flex;align-items:center;gap:6px">'+
+      '<span style="background:rgba(255,71,87,.2);color:var(--red);font-weight:800;font-size:12px;padding:4px 10px;border-radius:20px;border:1px solid rgba(255,71,87,.4)">'+
+        '⚠️ '+n+' jogo'+(n!==1?'s':'')+' sem palpite ↓'+
+      '</span>'+
+    '</div>'+
+  '</div>';
+}
+
+async function loadDashboardPredAlert() {
+  var el = document.getElementById('dashboard-pred-alert');
+  if (!el || !currentUser) { if (el) el.innerHTML=''; return; }
+  try {
+    var now = new Date();
+    var todayKey    = lisbonDateKey(now);
+    var d2 = new Date(now); d2.setDate(d2.getDate()+1);
+    var tomorrowKey = lisbonDateKey(d2);
+    var utcFrom = now.toISOString().split('T')[0];
+    var utcTo   = new Date(now); utcTo.setDate(utcTo.getDate()+4);
+    var res = await wcFetch('competitions/WC/matches?dateFrom='+utcFrom+'&dateTo='+utcTo.toISOString().split('T')[0]);
+    if (!res.ok) { el.innerHTML=''; return; }
+    var data = await res.json();
+    var missing = (data.matches||[]).filter(function(m){
+      if (!m.utcDate) return false;
+      var key = lisbonDateKey(new Date(m.utcDate));
+      if (key !== todayKey && key !== tomorrowKey) return false;
+      var started = ['IN_PLAY','PAUSED','FINISHED','FULL_TIME'].indexOf(m.status) >= 0;
+      if (started || new Date() >= new Date(m.utcDate)) return false;
+      var mid = String(m.id || (m.homeTeam.name+'-'+m.awayTeam.name).replace(/\s/g,''));
+      return !userPredictions.matches || !userPredictions.matches[mid];
+    });
+    el.innerHTML = missing.length ? buildPredAlertHtml(missing.length) : '';
+  } catch(e) { if (el) el.innerHTML=''; }
+}
+
 async function loadMatches() {
   var container = document.getElementById('matches-list');
   container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>A carregar jogos...</div></div>';
@@ -1081,21 +1128,7 @@ async function loadMatches() {
       });
       if (missing.length) {
         var n = missing.length;
-        var alertHtml =
-          '<div class="var-alert">'+
-            '<div style="font-size:28px;margin-bottom:8px;animation:varShake 0.6s ease-in-out 1s 3">📺</div>'+
-            '<div style="font-size:14px;font-weight:900;color:var(--red);letter-spacing:.5px;margin-bottom:8px;text-transform:uppercase">O VAR está em revisão...</div>'+
-            '<div style="font-size:13px;color:var(--text);line-height:1.6">'+
-              'Não encontrámos palpites teus para os jogos de hoje e/ou amanhã.<br>'+
-              'Após análise de vídeo, o Hugo e o Cajó dizem que és oficialmente o elemento mais BURRO e Atrasado Mental deste grupo.'+
-            '</div>'+
-            '<div style="margin-top:12px;display:flex;align-items:center;gap:6px">'+
-              '<span style="background:rgba(255,71,87,.2);color:var(--red);font-weight:800;font-size:12px;padding:4px 10px;border-radius:20px;border:1px solid rgba(255,71,87,.4)">'+
-                '⚠️ '+n+' jogo'+(n!==1?'s':'')+' sem palpite ↓'+
-              '</span>'+
-            '</div>'+
-          '</div>';
-        container.insertAdjacentHTML('afterbegin', alertHtml);
+        container.insertAdjacentHTML('afterbegin', buildPredAlertHtml(missing.length));
       }
     }
   } catch(err) {
@@ -1117,8 +1150,11 @@ async function loadPalpites() {
   }
   container.innerHTML='<div class="loading"><div class="loading-spinner"></div><div>A verificar acesso...</div></div>';
   try {
-    var accessDoc = await fbDb.collection('palpites').doc(currentUser.uid).get();
-    if (!accessDoc.exists) {
+    // Fetch all palpites docs to get list of authorized UIDs
+    var palpitesSnap = await fbDb.collection('palpites').get();
+    var authorizedUids = [];
+    palpitesSnap.forEach(function(doc){ authorizedUids.push(doc.id); });
+    if (authorizedUids.indexOf(currentUser.uid) === -1) {
       container.innerHTML='<div class="empty-state"><div class="empty-icon">🚫</div><p>Não tens acesso a esta secção.<br><span style="font-size:12px;color:var(--text3)">Pede ao administrador para te adicionar.</span></p></div>';
       return;
     }
@@ -1130,11 +1166,12 @@ async function loadPalpites() {
     var usersMap  = {};
     usersSnap.forEach(function(doc){ usersMap[doc.id]=doc.data(); });
     var matchesMap = {};
+    var allMatchesList = [];
     try {
       var mRes = await wcFetch('competitions/WC/matches');
-      if (mRes.ok) { var mData=await mRes.json(); (mData.matches||[]).forEach(function(m){ matchesMap[String(m.id)]=m; }); }
+      if (mRes.ok) { var mData=await mRes.json(); allMatchesList=(mData.matches||[]); allMatchesList.forEach(function(m){ matchesMap[String(m.id)]=m; }); }
     } catch(e){ console.warn('palpites matches:', e); }
-    palpitesCache = { allPreds:allPreds, usersMap:usersMap, matchesMap:matchesMap };
+    palpitesCache = { allPreds:allPreds, usersMap:usersMap, matchesMap:matchesMap, authorizedUids:authorizedUids, allMatchesList:allMatchesList };
     renderPalpitesUI(container);
   } catch(e) {
     console.error('loadPalpites:', e);
@@ -1166,6 +1203,45 @@ function palpitesSetView(view) {
   if (container && palpitesCache) renderPalpitesUI(container);
 }
 
+function buildMissingUsersAlert(c) {
+  if (!c.authorizedUids || !c.allMatchesList) return '';
+  var now = new Date();
+  var todayKey    = lisbonDateKey(now);
+  var d2 = new Date(now); d2.setDate(d2.getDate()+1);
+  var tomorrowKey = lisbonDateKey(d2);
+  // Get upcoming matches for today+tomorrow that haven't started
+  var upcomingMids = [];
+  (c.allMatchesList||[]).forEach(function(m){
+    if (!m.utcDate) return;
+    var key = lisbonDateKey(new Date(m.utcDate));
+    if (key !== todayKey && key !== tomorrowKey) return;
+    var started = ['IN_PLAY','PAUSED','FINISHED','FULL_TIME'].indexOf(m.status) >= 0;
+    if (started || new Date() >= new Date(m.utcDate)) return;
+    upcomingMids.push(String(m.id));
+  });
+  if (!upcomingMids.length) return '';
+  // Check which authorized users are missing predictions for ANY of these matches
+  var missingUsers = [];
+  (c.authorizedUids||[]).forEach(function(uid){
+    var preds = (c.allPreds[uid] && c.allPreds[uid].matches) ? c.allPreds[uid].matches : {};
+    var hasMissing = upcomingMids.some(function(mid){ return !preds[mid]; });
+    if (hasMissing) {
+      var name = (c.usersMap[uid] && c.usersMap[uid].displayName) ? c.usersMap[uid].displayName.split(' ')[0] : 'Utilizador';
+      missingUsers.push(escHtml(name));
+    }
+  });
+  if (!missingUsers.length) return '';
+  return '<div class="missing-alert">'+
+    '<div style="font-size:24px;margin-bottom:6px">⚠️</div>'+
+    '<div style="font-size:13px;font-weight:900;color:#b45309;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px">Palpites em falta!</div>'+
+    '<div style="font-size:12px;color:var(--text);line-height:1.6">'+
+      'Os seguintes jogadores ainda não submeteram palpites para hoje/amanhã:<br>'+
+      '<strong style="color:#92400e">'+missingUsers.join(', ')+'</strong>'+
+    '</div>'+
+    '<div style="margin-top:8px;font-size:11px;color:#a16207">'+upcomingMids.length+' jogo'+(upcomingMids.length!==1?'s':'')+' ainda sem palpite destes utilizadores</div>'+
+  '</div>';
+}
+
 function renderPalpitesUI(container) {
   var c = palpitesCache;
   var btnBase = 'flex:1;padding:9px;border-radius:10px;border:none;font-size:13px;font-weight:700;cursor:pointer;transition:all .2s;';
@@ -1174,11 +1250,12 @@ function renderPalpitesUI(container) {
       '<button onclick="palpitesSetView(\'byMatch\')" style="'+btnBase+(palpitesView==='byMatch'?'background:var(--accent);color:#000':'background:var(--card2);color:var(--text2)')+'">⚽ Por Jogo</button>'+
       '<button onclick="palpitesSetView(\'byUser\')" style="'+btnBase+(palpitesView==='byUser'?'background:var(--accent);color:#000':'background:var(--card2);color:var(--text2)')+'">👤 Por Utilizador</button>'+
     '</div>';
+  var missingAlert = buildMissingUsersAlert(c);
   var tourTable = renderTournamentPalpites(c.allPreds, c.usersMap);
   var main = palpitesView==='byMatch'
     ? renderPalpitesByMatch(c.allPreds, c.usersMap, c.matchesMap)
     : renderPalpitesByUser(c.allPreds, c.usersMap, c.matchesMap);
-  container.innerHTML = toggle + main + tourTable;
+  container.innerHTML = toggle + missingAlert + main + tourTable;
 }
 
 function renderTournamentPalpites(allPreds, usersMap) {
