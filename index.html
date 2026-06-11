@@ -274,7 +274,7 @@
   <button class="nav-btn active" id="nav-dashboard" onclick="showSection('dashboard')"><span class="nav-icon">📊</span><span>Dashboard</span></button>
   <button class="nav-btn" id="nav-matches" onclick="showSection('matches')"><span class="nav-icon">⚽</span><span>Jogos</span></button>
   <button class="nav-btn" id="nav-ranking" onclick="showSection('ranking')"><span class="nav-icon">🏅</span><span>Ranking</span></button>
-  <button class="nav-btn" id="nav-palpites" onclick="showSection('palpites')"><span class="nav-icon">🎯</span><span>Palpites</span></button>
+  <button class="nav-btn" id="nav-palpites" onclick="showSection('palpites')" style="display:none"><span class="nav-icon">🎯</span><span>Palpites</span></button>
 </nav>
 <script>
 
@@ -317,12 +317,25 @@ if (fbAuth) {
     renderAuthArea();
     if (user) {
       loadUserPredictions().then(function(){ refreshPredPanels(); renderPicksCard(); loadDashboardPredAlert(); });
+      checkPalpitesAccess(user.uid);
     } else {
       userPredictions = { matches:{}, tournament:{} };
       refreshPredPanels();
       renderPicksCard();
+      document.getElementById('nav-palpites').style.display = 'none';
     }
   });
+}
+
+async function checkPalpitesAccess(uid) {
+  var btn = document.getElementById('nav-palpites');
+  if (!btn) return;
+  try {
+    var doc = await fbDb.collection('palpites').doc(uid).get();
+    btn.style.display = doc.exists ? '' : 'none';
+  } catch(e) {
+    btn.style.display = 'none';
+  }
 }
 
 function renderAuthArea() {
@@ -1203,42 +1216,61 @@ function palpitesSetView(view) {
   if (container && palpitesCache) renderPalpitesUI(container);
 }
 
+function getUserName(uid, c) {
+  var u = c.usersMap[uid];
+  if (u) {
+    var n = u.displayName || u.name || u.email || '';
+    if (n) return n.split(' ')[0];
+  }
+  // fallback: try to find name from allPreds metadata
+  return uid.slice(0,6)+'…';
+}
+
 function buildMissingUsersAlert(c) {
   if (!c.authorizedUids || !c.allMatchesList) return '';
   var now = new Date();
   var todayKey    = lisbonDateKey(now);
   var d2 = new Date(now); d2.setDate(d2.getDate()+1);
   var tomorrowKey = lisbonDateKey(d2);
-  // Get upcoming matches for today+tomorrow that haven't started
-  var upcomingMids = [];
+  // Collect upcoming matches (not started) for today+tomorrow
+  var upcomingMatches = [];
   (c.allMatchesList||[]).forEach(function(m){
     if (!m.utcDate) return;
     var key = lisbonDateKey(new Date(m.utcDate));
     if (key !== todayKey && key !== tomorrowKey) return;
     var started = ['IN_PLAY','PAUSED','FINISHED','FULL_TIME'].indexOf(m.status) >= 0;
     if (started || new Date() >= new Date(m.utcDate)) return;
-    upcomingMids.push(String(m.id));
+    upcomingMatches.push(m);
   });
-  if (!upcomingMids.length) return '';
-  // Check which authorized users are missing predictions for ANY of these matches
-  var missingUsers = [];
+  if (!upcomingMatches.length) return '';
+  // Build per-user missing list
+  var missingRows = [];
   (c.authorizedUids||[]).forEach(function(uid){
     var preds = (c.allPreds[uid] && c.allPreds[uid].matches) ? c.allPreds[uid].matches : {};
-    var hasMissing = upcomingMids.some(function(mid){ return !preds[mid]; });
-    if (hasMissing) {
-      var name = (c.usersMap[uid] && c.usersMap[uid].displayName) ? c.usersMap[uid].displayName.split(' ')[0] : 'Utilizador';
-      missingUsers.push(escHtml(name));
+    var missingMatchLabels = [];
+    upcomingMatches.forEach(function(m){
+      var mid = String(m.id);
+      if (!preds[mid]) {
+        var home = (m.homeTeam&&m.homeTeam.shortName)||'?';
+        var away = (m.awayTeam&&m.awayTeam.shortName)||'?';
+        missingMatchLabels.push(escHtml(home)+' vs '+escHtml(away));
+      }
+    });
+    if (missingMatchLabels.length) {
+      missingRows.push({ name: getUserName(uid, c), matches: missingMatchLabels });
     }
   });
-  if (!missingUsers.length) return '';
+  if (!missingRows.length) return '';
+  var rows = missingRows.map(function(r){
+    return '<div style="margin-top:8px;text-align:left">'+
+      '<span style="font-weight:800;color:#92400e">'+r.name+'</span>'+
+      '<div style="font-size:11px;color:#a16207;margin-top:2px">'+r.matches.join(' &nbsp;·&nbsp; ')+'</div>'+
+    '</div>';
+  }).join('');
   return '<div class="missing-alert">'+
-    '<div style="font-size:24px;margin-bottom:6px">⚠️</div>'+
-    '<div style="font-size:13px;font-weight:900;color:#b45309;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px">Palpites em falta!</div>'+
-    '<div style="font-size:12px;color:var(--text);line-height:1.6">'+
-      'Os seguintes jogadores ainda não submeteram palpites para hoje/amanhã:<br>'+
-      '<strong style="color:#92400e">'+missingUsers.join(', ')+'</strong>'+
-    '</div>'+
-    '<div style="margin-top:8px;font-size:11px;color:#a16207">'+upcomingMids.length+' jogo'+(upcomingMids.length!==1?'s':'')+' ainda sem palpite destes utilizadores</div>'+
+    '<div style="font-size:22px;margin-bottom:4px">⚠️</div>'+
+    '<div style="font-size:13px;font-weight:900;color:#b45309;letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px">Palpites em falta!</div>'+
+    rows+
   '</div>';
 }
 
