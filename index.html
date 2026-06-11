@@ -1105,6 +1105,15 @@ async function loadPalpites() {
   }
 }
 
+function togglePalpitesMatch(safeId) {
+  var el = document.getElementById('pmatch-'+safeId);
+  var arrow = document.getElementById('parr-'+safeId);
+  if (!el) return;
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  if (arrow) arrow.textContent = open ? '▶' : '▼';
+}
+
 function palpitesSetView(view) {
   palpitesView = view;
   var container = document.getElementById('palpites-content');
@@ -1123,7 +1132,7 @@ function renderPalpitesUI(container) {
   var main = palpitesView==='byMatch'
     ? renderPalpitesByMatch(c.allPreds, c.usersMap, c.matchesMap)
     : renderPalpitesByUser(c.allPreds, c.usersMap, c.matchesMap);
-  container.innerHTML = toggle + tourTable + main;
+  container.innerHTML = toggle + main + tourTable;
 }
 
 function renderTournamentPalpites(allPreds, usersMap) {
@@ -1136,8 +1145,11 @@ function renderTournamentPalpites(allPreds, usersMap) {
     var correctChampion  = ACTUAL_CHAMPION   && t.champion  && t.champion.trim().toLowerCase()===ACTUAL_CHAMPION.toLowerCase();
     var correctScorer    = ACTUAL_TOP_SCORER && t.topScorer && t.topScorer.trim().toLowerCase()===ACTUAL_TOP_SCORER.toLowerCase();
     var correctMvp       = ACTUAL_MVP        && t.mvp       && t.mvp.trim().toLowerCase()===ACTUAL_MVP.toLowerCase();
-    function cell(val, correct){
-      return '<td style="padding:8px 6px;font-size:12px;color:'+(correct?'var(--green)':'var(--text2)')+'">'+escHtml(val||'—')+(correct?' ✓':'')+'</td>';
+    function cell(val, correct, withFlag){
+      var inner = withFlag && val
+        ? '<div style="display:flex;align-items:center;gap:4px">'+flagImg(val,16)+escHtml(val||'—')+(correct?' ✓':'')+'</div>'
+        : escHtml(val||'—')+(correct?' ✓':'');
+      return '<td style="padding:8px 6px;font-size:12px;color:'+(correct?'var(--green)':'var(--text2)')+'">'+inner+'</td>';
     }
     return '<tr style="border-top:1px solid var(--border)">'+
       '<td style="padding:8px 6px;white-space:nowrap"><div style="display:flex;align-items:center;gap:6px">'+
@@ -1145,7 +1157,7 @@ function renderTournamentPalpites(allPreds, usersMap) {
           :'<div style="width:24px;height:24px;border-radius:50%;background:var(--bg3);flex-shrink:0"></div>')+
         '<span style="font-size:12px;font-weight:600">'+escHtml(u.name||'?')+'</span>'+
       '</div></td>'+
-      cell(t.champion,correctChampion)+cell(t.topScorer,correctScorer)+cell(t.mvp,correctMvp)+
+      cell(t.champion,correctChampion,true)+cell(t.topScorer,correctScorer)+cell(t.mvp,correctMvp)+
     '</tr>';
   }).join('');
   return '<div class="card" style="overflow-x:auto;padding:14px;margin-top:12px">'+
@@ -1230,17 +1242,22 @@ function renderMatchPalpitesCard(mid, allPreds, usersMap, matchesMap) {
     '</div>';
   }).join('');
 
-  return '<div class="card" style="margin-bottom:12px">'+
-    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">'+
+  var safeId = mid.replace(/[^a-zA-Z0-9]/g,'_');
+  return '<div class="card" style="margin-bottom:12px;cursor:pointer" onclick="togglePalpitesMatch(\''+safeId+'\')">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between">'+
       '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
         flagImg(homeTeam,20)+'<span style="font-size:13px;font-weight:700">'+escHtml(homeTeam)+'</span>'+
         '<span style="color:var(--text3);font-size:11px">vs</span>'+
         '<span style="font-size:13px;font-weight:700">'+escHtml(awayTeam)+'</span>'+flagImg(awayTeam,20)+
       '</div>'+
-      actualScoreHtml+
+      '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0">'+
+        actualScoreHtml+
+        '<span style="font-size:11px;color:var(--text3)">'+preds.length+'🎯</span>'+
+        '<span id="parr-'+safeId+'" style="color:var(--text3);font-size:12px;transition:transform .2s">▶</span>'+
+      '</div>'+
     '</div>'+
-    '<div style="font-size:10px;color:var(--text3);margin-bottom:8px">'+escHtml(group)+'</div>'+
-    rows+
+    '<div style="font-size:10px;color:var(--text3);margin-top:2px">'+escHtml(group)+'</div>'+
+    '<div id="pmatch-'+safeId+'" style="display:none">'+rows+'</div>'+
   '</div>';
 }
 
