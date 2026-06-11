@@ -1584,7 +1584,10 @@ async function loadRanking() {
           }
         });
         var statuses = {};
-        (mData.matches||[]).forEach(function(m){ statuses[m.status] = (statuses[m.status]||0)+1; });
+        (mData.matches||[]).forEach(function(m){
+          statuses[m.status] = (statuses[m.status]||0)+1;
+          if (m.status==='FINISHED'||m.status==='FULL_TIME') console.log('[Ranking] Jogo terminado raw:', m.id, m.homeTeam&&m.homeTeam.name, m.awayTeam&&m.awayTeam.name, 'score:', JSON.stringify(m.score));
+        });
         console.log('[Ranking] Jogos terminados:', Object.keys(matchPoints).length, matchPoints);
         console.log('[Ranking] Todos os status na API:', statuses);
       } else {
