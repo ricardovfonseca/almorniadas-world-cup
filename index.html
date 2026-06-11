@@ -1244,7 +1244,7 @@ function buildMissingUsersAlert(c) {
   var tomorrowKey = lisbonDateKey(d2);
   // Incluir amanhã apenas se ainda for antes do meio-dia de Lisboa
   var lisbonHour = parseInt(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',hour:'2-digit',hour12:false}).format(now));
-  var includeTomorrow = lisbonHour < 12;
+  var includeTomorrow = lisbonHour < 8;
   // Collect upcoming matches (not started) for today + amanhã (só antes do meio-dia)
   var upcomingMatches = [];
   (c.allMatchesList||[]).forEach(function(m){
