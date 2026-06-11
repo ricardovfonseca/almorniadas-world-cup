@@ -1583,7 +1583,10 @@ async function loadRanking() {
             matchPoints[String(m.id)] = { home: m.score.fullTime.home, away: m.score.fullTime.away };
           }
         });
+        var statuses = {};
+        (mData.matches||[]).forEach(function(m){ statuses[m.status] = (statuses[m.status]||0)+1; });
         console.log('[Ranking] Jogos terminados:', Object.keys(matchPoints).length, matchPoints);
+        console.log('[Ranking] Todos os status na API:', statuses);
       } else {
         console.warn('[Ranking] API erro:', mRes.status);
       }
