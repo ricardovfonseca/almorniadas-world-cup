@@ -1555,10 +1555,17 @@ async function loadRanking() {
     return;
   }
   try {
-    // Fetch all predictions
+    // Fetch all predictions (normalize flat keys → nested)
     var snap = await fbDb.collection('predictions').get();
     var allPreds = {};
-    snap.forEach(function(doc){ allPreds[doc.id] = doc.data(); });
+    snap.forEach(function(doc){
+      var d = doc.data();
+      var matchesData = (d.matches && typeof d.matches === 'object') ? Object.assign({}, d.matches) : {};
+      Object.keys(d).forEach(function(k){
+        if (k.startsWith('matches.')) { var mid=k.slice(8); if (!matchesData[mid]) matchesData[mid]=d[k]; }
+      });
+      allPreds[doc.id] = Object.assign({}, d, { matches: matchesData });
+    });
 
     // Fetch user profiles
     var uSnap = await fbDb.collection('users').get();
@@ -1593,7 +1600,7 @@ async function loadRanking() {
       var bonusPts = calcBonusPoints(preds.tournament);
       var total = matchPts + bonusPts;
       var u = users[uid] || {};
-      return { uid: uid, name: u.name||'Jogador', photo: u.photo||'', total: total, matchPts: matchPts, bonusPts: bonusPts, matchCount: matchCount };
+      return { uid: uid, name: u.displayName||u.name||'Jogador', photo: u.photoURL||u.photo||'', total: total, matchPts: matchPts, bonusPts: bonusPts, matchCount: matchCount };
     });
     scores.sort(function(a,b){ return b.total - a.total; });
 
