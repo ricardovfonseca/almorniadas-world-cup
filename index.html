@@ -30,6 +30,11 @@
     .auth-out{background:none;border:1px solid var(--border);color:var(--text3);border-radius:8px;padding:4px 8px;font-size:10px;cursor:pointer}
     .live-dot{display:inline-block;width:7px;height:7px;background:var(--red);border-radius:50%;animation:pulse 1.5s infinite;margin-right:4px;vertical-align:middle}
     @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+    @keyframes varGlow{0%,100%{box-shadow:0 0 0 0 rgba(255,71,87,.4),0 4px 20px rgba(255,71,87,.1)}50%{box-shadow:0 0 0 8px rgba(255,71,87,0),0 4px 30px rgba(255,71,87,.35)}}
+    @keyframes varShake{0%,100%{transform:translateX(0)}10%,30%,50%,70%,90%{transform:translateX(-3px)}20%,40%,60%,80%{transform:translateX(3px)}}
+    .var-alert{margin:12px 16px 4px;padding:16px;background:linear-gradient(135deg,rgba(255,71,87,.12),rgba(255,107,53,.1));border:1.5px solid rgba(255,71,87,.55);border-radius:14px;animation:varGlow 2s ease-in-out infinite;position:relative;overflow:hidden;cursor:default}
+    .var-alert::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--red),#ff6b35,var(--red));background-size:200% 100%;animation:shimmer 2s linear infinite}
+    @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
     nav{position:fixed;bottom:0;left:0;right:0;background:var(--bg2);border-top:1px solid var(--border);display:flex;z-index:100;padding-bottom:env(safe-area-inset-bottom)}
     .nav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 4px;cursor:pointer;background:none;border:none;color:var(--text3);font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;transition:color .2s;position:relative}
     .nav-btn .nav-icon{font-size:20px;transition:transform .2s}
@@ -1061,6 +1066,38 @@ async function loadMatches() {
     }
     if (currentUser) await loadUserPredictions();
     refreshPredPanels();
+    // Alert: check if user has missing predictions for today/tomorrow upcoming matches
+    if (currentUser) {
+      var missing = [];
+      [todayKey, tomorrowKey].forEach(function(dayKey){
+        (byPTDate[dayKey]||[]).forEach(function(m){
+          var started = ['IN_PLAY','PAUSED','FINISHED','FULL_TIME'].indexOf(m.status) >= 0;
+          var kickedOff = m.utcDate && new Date() >= new Date(m.utcDate);
+          if (!started && !kickedOff) {
+            var mid = String(m.id || (m.homeTeam.name+'-'+m.awayTeam.name).replace(/\s/g,''));
+            if (!userPredictions.matches || !userPredictions.matches[mid]) missing.push(m);
+          }
+        });
+      });
+      if (missing.length) {
+        var n = missing.length;
+        var alertHtml =
+          '<div class="var-alert">'+
+            '<div style="font-size:28px;margin-bottom:8px;animation:varShake 0.6s ease-in-out 1s 3">📺</div>'+
+            '<div style="font-size:14px;font-weight:900;color:var(--red);letter-spacing:.5px;margin-bottom:8px;text-transform:uppercase">O VAR está em revisão...</div>'+
+            '<div style="font-size:13px;color:var(--text);line-height:1.6">'+
+              'Não encontrámos palpites teus para os jogos de hoje e/ou amanhã.<br>'+
+              'Após análise de vídeo, concluímos que és oficialmente o elemento mais imprevisível deste grupo.'+
+            '</div>'+
+            '<div style="margin-top:12px;display:flex;align-items:center;gap:6px">'+
+              '<span style="background:rgba(255,71,87,.2);color:var(--red);font-weight:800;font-size:12px;padding:4px 10px;border-radius:20px;border:1px solid rgba(255,71,87,.4)">'+
+                '⚠️ '+n+' jogo'+(n!==1?'s':'')+' sem palpite ↓'+
+              '</span>'+
+            '</div>'+
+          '</div>';
+        container.insertAdjacentHTML('afterbegin', alertHtml);
+      }
+    }
   } catch(err) {
     console.error(err);
     container.innerHTML='<div class="empty-state"><div class="empty-icon">⚠️</div><p><strong>Erro ao carregar jogos.</strong><br><span style="font-size:11px;color:var(--text3)">'+err.message+'</span></p></div>';
