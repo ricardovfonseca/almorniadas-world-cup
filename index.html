@@ -981,50 +981,74 @@ function renderMatch(m) {
 async function loadMatches() {
   var container = document.getElementById('matches-list');
   container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>A carregar jogos...</div></div>';
-  // Use current date (recalculated each call, not stale page-load value)
   var now = new Date();
-  // Local date string (e.g. "2026-06-11") — used for filtering
-  var localDateStr = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
-  // UTC date range: query today + tomorrow UTC to catch late US games that fall on next UTC day
-  var utcDateStr = now.toISOString().split('T')[0];
-  var nextUtc = new Date(now); nextUtc.setUTCDate(nextUtc.getUTCDate()+1);
-  var nextUtcStr = nextUtc.toISOString().split('T')[0];
+
+  // Helper: YYYY-MM-DD of a Date in Lisbon timezone (handles DST correctly)
+  function lisbonDateKey(d) {
+    return new Intl.DateTimeFormat('en-CA', {timeZone:'Europe/Lisbon',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
+  }
+  var todayKey    = lisbonDateKey(now);
+  var d2 = new Date(now); d2.setDate(d2.getDate()+1);
+  var tomorrowKey = lisbonDateKey(d2);
+
+  // Query UTC: today to today+4 days — safely covers 3 Lisbon days even with UTC offset
+  var utcFrom = now.toISOString().split('T')[0];
+  var utcTo   = new Date(now); utcTo.setDate(utcTo.getDate()+4);
+  var utcToStr = utcTo.toISOString().split('T')[0];
+
   try {
-    var res = await wcFetch('competitions/WC/matches?dateFrom='+utcDateStr+'&dateTo='+nextUtcStr);
+    var res = await wcFetch('competitions/WC/matches?dateFrom='+utcFrom+'&dateTo='+utcToStr);
     if (res.status===401){container.innerHTML='<div class="empty-state"><p><strong>Chave API inválida.</strong></p></div>';return}
     if (res.status===403){container.innerHTML='<div class="empty-state"><p><strong>Acesso negado.</strong></p></div>';return}
     if (res.status===429){container.innerHTML='<div class="empty-state"><p><strong>Muitos pedidos. Aguarda.</strong></p></div>';return}
     if (!res.ok) throw new Error('HTTP '+res.status);
     var data = await res.json();
-    // Filter to matches that are "today" in the user's local timezone
-    var todayMatches = (data.matches||[]).filter(function(m){
-      if (!m.utcDate) return false;
-      var d = new Date(m.utcDate);
-      var localD = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-      return localD === localDateStr;
+
+    // Group matches by their Lisbon local date
+    var byPTDate = {};
+    (data.matches||[]).forEach(function(m){
+      if (!m.utcDate) return;
+      var key = lisbonDateKey(new Date(m.utcDate));
+      if (!byPTDate[key]) byPTDate[key] = [];
+      byPTDate[key].push(m);
     });
-    var dateStr = utcDateStr; // keep for fallback
-    if (!todayMatches.length) {
-      var future=new Date(now); future.setDate(future.getDate()+30);
-      var upRes=await wcFetch('competitions/WC/matches?dateFrom='+dateStr+'&dateTo='+future.toISOString().split('T')[0]+'&status=SCHEDULED');
+
+    // Show first 3 Lisbon days that have matches
+    var ptDates = Object.keys(byPTDate).sort().slice(0,3);
+
+    if (!ptDates.length) {
+      // Fallback: no matches in next 4 days — show next 30 days scheduled
+      var future = new Date(now); future.setDate(future.getDate()+30);
+      var upRes = await wcFetch('competitions/WC/matches?dateFrom='+utcFrom+'&dateTo='+future.toISOString().split('T')[0]+'&status=SCHEDULED');
       if (!upRes.ok) throw new Error('HTTP '+upRes.status);
-      var upData=await upRes.json();
+      var upData = await upRes.json();
       if (!upData.matches||!upData.matches.length){
-        container.innerHTML='<div class="empty-state"><div class="empty-icon">📅</div><p><strong>Sem jogos.</strong><br>O torneio começa a 11 de junho de 2026.</p></div>';
+        container.innerHTML='<div class="empty-state"><div class="empty-icon">📅</div><p><strong>Sem jogos próximos.</strong></p></div>';
         return;
       }
       var byDate={};
-      upData.matches.forEach(function(m){var d=m.utcDate?m.utcDate.split('T')[0]:'TBD';if(!byDate[d])byDate[d]=[];byDate[d].push(m)});
+      upData.matches.forEach(function(m){
+        var key=lisbonDateKey(new Date(m.utcDate));
+        if(!byDate[key])byDate[key]=[];byDate[key].push(m);
+      });
       container.innerHTML='<div style="padding:0 16px 8px;font-size:11px;color:var(--text3);text-align:center">Sem jogos hoje · A mostrar próximos jogos</div>'+
-        Object.entries(byDate).slice(0,5).map(function(e){
+        Object.entries(byDate).sort(function(a,b){return a[0]<b[0]?-1:1}).slice(0,5).map(function(e){
           var dt=e[0],matches=e[1];
-          return '<div style="padding:6px 16px 4px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px">'+
-            new Date(dt+'T12:00:00').toLocaleDateString('pt-PT',{weekday:'short',day:'numeric',month:'short'})+
-            '</div></div>'+matches.map(renderMatch).join('');
+          var label = dt===todayKey?'Hoje':dt===tomorrowKey?'Amanhã':
+            new Date(dt+'T12:00:00').toLocaleDateString('pt-PT',{weekday:'long',day:'numeric',month:'long'});
+          return '<div style="padding:6px 16px 4px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px">'+label+'</div></div>'+
+            matches.map(renderMatch).join('');
         }).join('');
     } else {
-      container.innerHTML = todayMatches.map(renderMatch).join('');
+      container.innerHTML = ptDates.map(function(ptD){
+        var matches = byPTDate[ptD];
+        var label = ptD===todayKey ? 'Hoje' : ptD===tomorrowKey ? 'Amanhã' :
+          new Date(ptD+'T12:00:00').toLocaleDateString('pt-PT',{weekday:'long',day:'numeric',month:'long'});
+        return '<div style="padding:6px 16px 4px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px">'+label+'</div></div>'+
+          matches.map(renderMatch).join('');
+      }).join('');
     }
+    if (currentUser) await loadUserPredictions();
     refreshPredPanels();
   } catch(err) {
     console.error(err);
