@@ -1572,19 +1572,23 @@ async function loadRanking() {
     var users = {};
     uSnap.forEach(function(doc){ users[doc.id] = doc.data(); });
 
-    // Fetch finished matches for scoring
+    // Fetch all matches and filter finished ones client-side (avoids proxy issues with query params)
     var matchPoints = {}; // matchId → {home, away}
     try {
-      var mRes = await wcFetch('competitions/WC/matches?status=FINISHED');
+      var mRes = await wcFetch('competitions/WC/matches');
       if (mRes.ok) {
         var mData = await mRes.json();
         (mData.matches||[]).forEach(function(m){
-          if (m.score && m.score.fullTime && m.score.fullTime.home !== null) {
+          if ((m.status==='FINISHED'||m.status==='FULL_TIME') && m.score && m.score.fullTime && m.score.fullTime.home !== null) {
             matchPoints[String(m.id)] = { home: m.score.fullTime.home, away: m.score.fullTime.away };
           }
         });
+        console.log('[Ranking] Jogos terminados:', Object.keys(matchPoints).length, matchPoints);
+      } else {
+        console.warn('[Ranking] API erro:', mRes.status);
       }
-    } catch(e){ console.warn('Matches for scoring:', e.message); }
+    } catch(e){ console.warn('[Ranking] Matches fetch error:', e.message); }
+    console.log('[Ranking] Palpites utilizadores:', Object.keys(allPreds).length, 'IDs dos jogos terminados:', Object.keys(matchPoints));
 
     // Calculate scores per user
     var scores = Object.keys(allPreds).map(function(uid) {
