@@ -256,6 +256,7 @@
     .empty-state strong{color:var(--text2)}
     .section-actions{padding:0 16px 12px;display:flex;justify-content:flex-end}
     .refresh-btn{background:none;border:1px solid var(--border);color:var(--text2);border-radius:8px;padding:5px 10px;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:4px}
+    .refresh-btn.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:700}
     .refresh-btn:active{background:var(--card2)}
   </style>
 </head>
@@ -294,7 +295,13 @@
   </section>
   <section class="section" id="sec-matches">
     <div class="section-header"><h2>🗓️ Jogos</h2><p>Jogos do Mundial</p></div>
-    <div class="section-actions"><button class="refresh-btn" onclick="loadMatches()">↻ Atualizar</button></div>
+    <div class="section-actions" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;gap:8px">
+        <button class="refresh-btn active" id="mv-upcoming" onclick="setMatchesView('upcoming')">📅 Próximos</button>
+        <button class="refresh-btn" id="mv-mine" onclick="setMatchesView('mine')">🎯 Os meus palpites</button>
+      </div>
+      <button class="refresh-btn" onclick="refreshMatchesSection()">↻ Atualizar</button>
+    </div>
     <div id="matches-list"><div class="loading"><div class="loading-spinner"></div><div>A carregar jogos...</div></div></div>
   </section>
   <section class="section" id="sec-ranking">
@@ -586,10 +593,7 @@ function showSection(id) {
   document.querySelectorAll('.nav-btn').forEach(function(b){b.classList.remove('active')});
   document.getElementById('sec-'+id).classList.add('active');
   document.getElementById('nav-'+id).classList.add('active');
-  if (id === 'matches') {
-    loadMatches();
-    if (currentUser) loadUserPredictions().then(function(){ refreshPredPanels(); });
-  }
+  if (id === 'matches') refreshMatchesSection();
   if (id === 'ranking') loadRanking();
   if (id === 'palpites') loadPalpites();
   if (id === 'dashboard') loadDashboardPredAlert();
@@ -881,6 +885,41 @@ function calcBonusPoints(tournament) {
   return pts;
 }
 
+// matchesMap: matchId(string) → match object (da API). Devolve matchId → resultado final, só para jogos terminados.
+function buildMatchPointsMap(matchesMap) {
+  var matchPoints = {};
+  Object.keys(matchesMap||{}).forEach(function(mid){
+    var m = matchesMap[mid];
+    if (m && (m.status==='FINISHED'||m.status==='FULL_TIME') && m.score && m.score.fullTime && m.score.fullTime.home !== null) {
+      matchPoints[mid] = { home: m.score.fullTime.home, away: m.score.fullTime.away };
+    }
+  });
+  return matchPoints;
+}
+
+// Calcula a classificação (pontos totais, por jogo e bónus) para todos os utilizadores em allPreds.
+// Usado pelo Ranking e pela vista "Os meus palpites" da secção Jogos — mantém os dois sincronizados.
+function computeScoreboard(allPreds, matchesMap, usersMap) {
+  var matchPoints = buildMatchPointsMap(matchesMap);
+  var scores = Object.keys(allPreds||{}).map(function(uid) {
+    var preds = allPreds[uid];
+    var matchPts = 0, matchCount = 0;
+    var matches = preds.matches || {};
+    Object.keys(matches).forEach(function(mid){
+      var actual = matchPoints[mid];
+      if (!actual) return;
+      var pts = calcMatchPoints(matches[mid], actual);
+      if (pts !== null) { matchPts += pts; matchCount++; }
+    });
+    var bonusPts = calcBonusPoints(preds.tournament);
+    var total = matchPts + bonusPts;
+    var u = (usersMap && usersMap[uid]) || {};
+    return { uid: uid, name: u.displayName||u.name||'Jogador', photo: u.photoURL||u.photo||'', total: total, matchPts: matchPts, bonusPts: bonusPts, matchCount: matchCount };
+  });
+  scores.sort(function(a,b){ return b.total - a.total; });
+  return scores;
+}
+
 /* ══ Prediction panel (per match) ══ */
 function predPanelId(matchId) { return 'pred-' + matchId; }
 
@@ -1114,6 +1153,26 @@ async function loadDashboardPredAlert() {
   } catch(e) { if (el) el.innerHTML=''; }
 }
 
+/* ══ Jogos: toggle "Próximos" / "Os meus palpites" ══ */
+var matchesView = 'upcoming';
+
+function setMatchesView(view) {
+  matchesView = view;
+  var up = document.getElementById('mv-upcoming'), mine = document.getElementById('mv-mine');
+  if (up)   up.className   = 'refresh-btn' + (view==='upcoming' ? ' active' : '');
+  if (mine) mine.className = 'refresh-btn' + (view==='mine'     ? ' active' : '');
+  refreshMatchesSection();
+}
+
+function refreshMatchesSection() {
+  if (matchesView === 'mine') {
+    loadMyPredictions();
+  } else {
+    loadMatches();
+    if (currentUser) loadUserPredictions().then(function(){ refreshPredPanels(); });
+  }
+}
+
 async function loadMatches() {
   var container = document.getElementById('matches-list');
   container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>A carregar jogos...</div></div>';
@@ -1203,6 +1262,112 @@ async function loadMatches() {
   } catch(err) {
     console.error(err);
     container.innerHTML='<div class="empty-state"><div class="empty-icon">⚠️</div><p><strong>Erro ao carregar jogos.</strong><br><span style="font-size:11px;color:var(--text3)">'+err.message+'</span></p></div>';
+  }
+}
+
+// Vista "Os meus palpites": jogos já terminados com o palpite do utilizador atual,
+// mesmo estilo visual do cartão "Por Utilizador" em Palpites, com a posição no ranking junto ao nome.
+async function loadMyPredictions() {
+  var container = document.getElementById('matches-list');
+  if (!container) return;
+  container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>A carregar os teus palpites...</div></div>';
+  if (!currentUser) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">🔒</div><p><span onclick="signInWithGoogle()" style="color:var(--accent);cursor:pointer;font-weight:700;text-decoration:underline">Entra</span> para ver os teus palpites</p></div>';
+    return;
+  }
+  if (!fbDb) {
+    container.innerHTML = '<div class="empty-state"><p>Firebase não configurado.</p></div>';
+    return;
+  }
+  try {
+    var matchesMap = {};
+    try {
+      var mRes = await wcFetch('competitions/WC/matches');
+      if (mRes.ok) {
+        var mData = await mRes.json();
+        (mData.matches||[]).forEach(function(m){ matchesMap[String(m.id)] = m; });
+      }
+    } catch(e){ console.warn('loadMyPredictions matches:', e.message); }
+
+    var predsSnap = await fbDb.collection('predictions').get();
+    var allPreds = {};
+    predsSnap.forEach(function(doc){
+      var d = doc.data();
+      var matchesData = (d.matches && typeof d.matches === 'object') ? Object.assign({}, d.matches) : {};
+      Object.keys(d).forEach(function(k){
+        if (k.startsWith('matches.')) { var mid=k.slice(8); if (!matchesData[mid]) matchesData[mid]=d[k]; }
+      });
+      allPreds[doc.id] = Object.assign({}, d, { matches: matchesData });
+    });
+
+    var usersSnap = await fbDb.collection('users').get();
+    var usersMap = {};
+    usersSnap.forEach(function(doc){ usersMap[doc.id]=doc.data(); });
+
+    // Posição no ranking (mesma lógica usada na secção Ranking)
+    var scores = computeScoreboard(allPreds, matchesMap, usersMap);
+    var myIndex = scores.findIndex(function(s){ return s.uid === currentUser.uid; });
+    var myPos   = myIndex >= 0 ? myIndex + 1 : null;
+    var myTotal = myIndex >= 0 ? scores[myIndex].total : 0;
+
+    var myPreds = (allPreds[currentUser.uid] && allPreds[currentUser.uid].matches) || {};
+    var mids = Object.keys(myPreds).filter(function(mid){
+      var m = matchesMap[mid];
+      return m && (m.status==='FINISHED'||m.status==='FULL_TIME');
+    });
+    // Mais recentes primeiro
+    mids.sort(function(a,b){ return ((matchesMap[b]&&matchesMap[b].utcDate)||'') < ((matchesMap[a]&&matchesMap[a].utcDate)||'') ? -1 : 1; });
+
+    var u = usersMap[currentUser.uid] || {};
+    var posClasses = ['p1','p2','p3'];
+    var posClass = (myPos && myPos<=3) ? posClasses[myPos-1] : '';
+    var posBadge = myPos ? '<div class="ranking-pos '+posClass+'" style="width:28px;height:28px;font-size:12px;flex-shrink:0">'+myPos+'</div>' : '';
+    var photoUrl = currentUser.photoURL || u.photo || '';
+    var photo = photoUrl
+      ? '<img src="'+escHtml(photoUrl)+'" style="width:40px;height:40px;border-radius:50%;border:2px solid var(--accent);flex-shrink:0">'
+      : '<div style="width:40px;height:40px;border-radius:50%;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">👤</div>';
+    var myName = escHtml(currentUser.displayName || u.name || 'Tu');
+
+    var header = '<div style="display:flex;align-items:center;gap:10px">'+posBadge+photo+
+      '<div style="min-width:0;flex:1">'+
+        '<div style="font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+myName+'</div>'+
+        '<div style="font-size:11px;color:var(--text3)">'+mids.length+' jogo'+(mids.length!==1?'s':'')+' terminado'+(mids.length!==1?'s':'')+
+          (myTotal>0?' · <span style="color:var(--accent);font-weight:700">'+myTotal+' pts</span>':'')+
+          (myPos?' · '+myPos+'º lugar no ranking':'')+
+        '</div>'+
+      '</div>'+
+    '</div>';
+
+    if (!mids.length) {
+      container.innerHTML = '<div class="card" style="margin-bottom:12px">'+header+'</div>'+
+        '<div class="empty-state"><div class="empty-icon">🗓️</div><p>Ainda não tens palpites em jogos já terminados.</p></div>';
+      return;
+    }
+
+    var rows = mids.map(function(mid){
+      var m=matchesMap[mid], p=myPreds[mid];
+      var ht = m.homeTeam ? (m.homeTeam.shortName||m.homeTeam.name||mid) : mid;
+      var at = m.awayTeam ? (m.awayTeam.shortName||m.awayTeam.name||'?') : '?';
+      var actual = m.score && m.score.fullTime && m.score.fullTime.home!==null ? m.score.fullTime : null;
+      var pts = actual ? calcMatchPoints(p,{home:actual.home,away:actual.away}) : null;
+      var bg = pts===3?'rgba(0,201,167,.2);color:var(--accent)':pts>0?'rgba(255,215,0,.15);color:var(--gold)':'rgba(255,71,87,.1);color:var(--red)';
+      var ptsHtml = pts!==null ? '<span style="font-size:11px;padding:1px 5px;border-radius:10px;background:'+bg+'">'+pts+'pts</span>' : '';
+      var actualHtml = actual ? ' <span style="color:var(--text3);font-size:11px">('+actual.home+'-'+actual.away+')</span>' : '';
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-top:1px solid rgba(45,66,102,.4)">'+
+        '<div style="font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">'+
+          flagImg(ht,15)+' '+escHtml(ht)+' <span style="color:var(--text3)">vs</span> '+escHtml(at)+' '+flagImg(at,15)+actualHtml+
+        '</div>'+
+        '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:8px">'+
+          ptsHtml+
+          '<span style="font-weight:700;color:var(--accent);font-family:monospace;font-size:14px">'+p.home+' – '+p.away+'</span>'+
+        '</div>'+
+      '</div>';
+    }).join('');
+
+    container.innerHTML = '<div class="card" style="margin-bottom:12px">'+header+'<div style="margin-top:8px">'+rows+'</div></div>';
+  } catch(e) {
+    console.error('loadMyPredictions:', e);
+    container.innerHTML = '<div class="empty-state"><p>Erro ao carregar os teus palpites: '+e.message+'</p></div>';
   }
 }
 
@@ -1573,38 +1738,19 @@ async function loadRanking() {
     uSnap.forEach(function(doc){ users[doc.id] = doc.data(); });
 
     // Fetch all matches and filter finished ones client-side (avoids proxy issues with query params)
-    var matchPoints = {}; // matchId → {home, away}
+    var matchesMap = {}; // matchId → match object
     try {
       var mRes = await wcFetch('competitions/WC/matches');
       if (mRes.ok) {
         var mData = await mRes.json();
-        (mData.matches||[]).forEach(function(m){
-          if ((m.status==='FINISHED'||m.status==='FULL_TIME') && m.score && m.score.fullTime && m.score.fullTime.home !== null) {
-            matchPoints[String(m.id)] = { home: m.score.fullTime.home, away: m.score.fullTime.away };
-          }
-        });
+        (mData.matches||[]).forEach(function(m){ matchesMap[String(m.id)] = m; });
       } else {
         console.warn('[Ranking] API erro:', mRes.status);
       }
     } catch(e){ console.warn('[Ranking] Matches fetch error:', e.message); }
 
-    // Calculate scores per user
-    var scores = Object.keys(allPreds).map(function(uid) {
-      var preds = allPreds[uid];
-      var matchPts = 0, matchCount = 0;
-      var matches = preds.matches || {};
-      Object.keys(matches).forEach(function(mid){
-        var actual = matchPoints[mid];
-        if (!actual) return;
-        var pts = calcMatchPoints(matches[mid], actual);
-        if (pts !== null) { matchPts += pts; matchCount++; }
-      });
-      var bonusPts = calcBonusPoints(preds.tournament);
-      var total = matchPts + bonusPts;
-      var u = users[uid] || {};
-      return { uid: uid, name: u.displayName||u.name||'Jogador', photo: u.photoURL||u.photo||'', total: total, matchPts: matchPts, bonusPts: bonusPts, matchCount: matchCount };
-    });
-    scores.sort(function(a,b){ return b.total - a.total; });
+    // Calculate scores per user (helper partilhado com a vista "Os meus palpites" em Jogos)
+    var scores = computeScoreboard(allPreds, matchesMap, users);
 
     if (!scores.length) {
       container.innerHTML = '<div class="empty-state"><div class="empty-icon">🏅</div><p>Ainda ninguém fez palpites.</p></div>';
