@@ -1515,7 +1515,7 @@ function renderPalpitesByUser(allPreds, usersMap, matchesMap) {
       var actualHtml=actual?' <span style="color:var(--text3);font-size:11px">('+actual.home+'-'+actual.away+')</span>':'';
       return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-top:1px solid rgba(45,66,102,.4)">'+
         '<div style="font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">'+
-          flagImg(ht,15)+' '+escHtml(ht)+' <span style="color:var(--text3)">vs</span> '+escHtml(at)+' '+flagImg(at,15)+escHtml(actualHtml)+
+          flagImg(ht,15)+' '+escHtml(ht)+' <span style="color:var(--text3)">vs</span> '+escHtml(at)+' '+flagImg(at,15)+actualHtml+
         '</div>'+
         '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:8px">'+
           ptsHtml+
@@ -1583,18 +1583,10 @@ async function loadRanking() {
             matchPoints[String(m.id)] = { home: m.score.fullTime.home, away: m.score.fullTime.away };
           }
         });
-        var statuses = {};
-        (mData.matches||[]).forEach(function(m){
-          statuses[m.status] = (statuses[m.status]||0)+1;
-          if (m.status==='FINISHED'||m.status==='FULL_TIME') console.log('[Ranking] Jogo terminado raw:', m.id, m.homeTeam&&m.homeTeam.name, m.awayTeam&&m.awayTeam.name, 'score:', JSON.stringify(m.score));
-        });
-        console.log('[Ranking] Jogos terminados:', Object.keys(matchPoints).length, matchPoints);
-        console.log('[Ranking] Todos os status na API:', statuses);
       } else {
         console.warn('[Ranking] API erro:', mRes.status);
       }
     } catch(e){ console.warn('[Ranking] Matches fetch error:', e.message); }
-    console.log('[Ranking] Palpites utilizadores:', Object.keys(allPreds).length, 'IDs dos jogos terminados:', Object.keys(matchPoints));
 
     // Calculate scores per user
     var scores = Object.keys(allPreds).map(function(uid) {
