@@ -885,6 +885,46 @@ function calcBonusPoints(tournament) {
   return pts;
 }
 
+/* ══ Correção manual de resultados ══
+   A fonte de dados (football-data.org) por vezes demora a corrigir um resultado errado
+   logo após o fim do jogo. As correções ficam na coleção Firestore "scoreOverrides"
+   (editável a partir da secção Palpites, só para utilizadores autorizados nessa secção)
+   e afetam automaticamente Jogos, Ranking e Palpites em todo o site.
+   Este objeto serve só de seed/fallback inicial — '537371': Espanha 4 - Arábia Saudita 0.
+   Formato: 'ID_DO_JOGO': { home: golosCasa, away: golosFora }                              */
+var MANUAL_SCORE_OVERRIDES = {
+  '537371': { home: 4, away: 0 }, // Espanha 4 - Arábia Saudita 0 (API tinha 5-0)
+};
+
+function applyScoreOverrides(matches) {
+  (matches||[]).forEach(function(m){
+    var ov = MANUAL_SCORE_OVERRIDES[String(m.id)];
+    if (!ov) return;
+    if (!m.score) m.score = {};
+    m.score.fullTime = { home: ov.home, away: ov.away };
+    if (m.status !== 'FINISHED' && m.status !== 'FULL_TIME') m.status = 'FINISHED';
+  });
+  return matches;
+}
+
+// Carrega (uma vez por sessão) as correções guardadas em Firestore e funde-as em MANUAL_SCORE_OVERRIDES.
+// Chamado antes de cada applyScoreOverrides() para garantir que está sempre atualizado.
+var scoreOverridesPromise = null;
+function ensureScoreOverridesLoaded() {
+  if (!fbDb) return Promise.resolve();
+  if (!scoreOverridesPromise) {
+    scoreOverridesPromise = fbDb.collection('scoreOverrides').get().then(function(snap){
+      snap.forEach(function(doc){
+        var d = doc.data();
+        if (d && typeof d.home === 'number' && typeof d.away === 'number') {
+          MANUAL_SCORE_OVERRIDES[doc.id] = { home: d.home, away: d.away };
+        }
+      });
+    }).catch(function(e){ console.warn('scoreOverrides load:', e.message); });
+  }
+  return scoreOverridesPromise;
+}
+
 // matchesMap: matchId(string) → match object (da API). Devolve matchId → resultado final, só para jogos terminados.
 function buildMatchPointsMap(matchesMap) {
   var matchPoints = {};
@@ -1194,6 +1234,8 @@ async function loadMatches() {
     if (res.status===429){container.innerHTML='<div class="empty-state"><p><strong>Muitos pedidos. Aguarda.</strong></p></div>';return}
     if (!res.ok) throw new Error('HTTP '+res.status);
     var data = await res.json();
+    await ensureScoreOverridesLoaded();
+    applyScoreOverrides(data.matches);
 
     // Group matches by their Lisbon local date
     var byPTDate = {};
@@ -1285,6 +1327,8 @@ async function loadMyPredictions() {
       var mRes = await wcFetch('competitions/WC/matches');
       if (mRes.ok) {
         var mData = await mRes.json();
+        await ensureScoreOverridesLoaded();
+        applyScoreOverrides(mData.matches);
         (mData.matches||[]).forEach(function(m){ matchesMap[String(m.id)] = m; });
       }
     } catch(e){ console.warn('loadMyPredictions matches:', e.message); }
@@ -1414,7 +1458,7 @@ async function loadPalpites() {
     var allMatchesList = [];
     try {
       var mRes = await wcFetch('competitions/WC/matches');
-      if (mRes.ok) { var mData=await mRes.json(); allMatchesList=(mData.matches||[]); allMatchesList.forEach(function(m){ matchesMap[String(m.id)]=m; }); }
+      if (mRes.ok) { var mData=await mRes.json(); await ensureScoreOverridesLoaded(); applyScoreOverrides(mData.matches); allMatchesList=(mData.matches||[]); allMatchesList.forEach(function(m){ matchesMap[String(m.id)]=m; }); }
     } catch(e){ console.warn('palpites matches:', e); }
     palpitesCache = { allPreds:allPreds, usersMap:usersMap, matchesMap:matchesMap, authorizedUids:authorizedUids, allMatchesList:allMatchesList };
     renderPalpitesUI(container);
@@ -1521,7 +1565,82 @@ function renderPalpitesUI(container) {
   var main = palpitesView==='byMatch'
     ? renderPalpitesByMatch(c.allPreds, c.usersMap, c.matchesMap)
     : renderPalpitesByUser(c.allPreds, c.usersMap, c.matchesMap);
-  container.innerHTML = toggle + missingAlert + main + tourTable;
+  var overrideAdmin = renderScoreOverrideAdmin(c);
+  container.innerHTML = toggle + missingAlert + main + tourTable + overrideAdmin;
+}
+
+// Card visível só dentro de Palpites (já restrito a quem tem doc em /palpites) para forçar
+// manualmente o resultado de um jogo quando a fonte de dados estiver errada/atrasada.
+// A escrita em Firestore (scoreOverrides) está também protegida pelas regras de segurança.
+function renderScoreOverrideAdmin(c) {
+  var matches = (c.allMatchesList||[]).slice().sort(function(a,b){ return (a.utcDate||'') < (b.utcDate||'') ? -1 : 1; });
+  var options = matches.map(function(m){
+    var ht = m.homeTeam ? (m.homeTeam.shortName||m.homeTeam.name||'?') : '?';
+    var at = m.awayTeam ? (m.awayTeam.shortName||m.awayTeam.name||'?') : '?';
+    var dateLabel = m.utcDate ? new Date(m.utcDate).toLocaleDateString('pt-PT',{day:'2-digit',month:'2-digit'}) : '';
+    return '<option value="'+m.id+'">'+escHtml(ht)+' vs '+escHtml(at)+(dateLabel?' ('+dateLabel+')':'')+'</option>';
+  }).join('');
+
+  var activeIds = Object.keys(MANUAL_SCORE_OVERRIDES);
+  var activeRows = activeIds.map(function(mid){
+    var m = c.matchesMap[mid];
+    var label = m ? ((m.homeTeam?(m.homeTeam.shortName||m.homeTeam.name):'?')+' vs '+(m.awayTeam?(m.awayTeam.shortName||m.awayTeam.name):'?')) : ('Jogo '+mid);
+    var ov = MANUAL_SCORE_OVERRIDES[mid];
+    return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-top:1px solid rgba(45,66,102,.4);font-size:12px">'+
+      '<span>'+escHtml(label)+' <strong style="color:var(--accent)">'+ov.home+' - '+ov.away+'</strong></span>'+
+      '<button onclick="removeScoreOverride(\''+mid+'\')" style="background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;padding:2px 8px;font-size:11px;cursor:pointer">🗑️ remover</button>'+
+    '</div>';
+  }).join('');
+
+  return '<div class="card" style="margin-top:12px">'+
+    '<div class="card-title"><span class="icon">🛠️</span> Corrigir resultado de um jogo</div>'+
+    '<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Usa isto quando a fonte de dados mostrar um resultado errado. Afeta Jogos, Ranking e Palpites em todo o site.</div>'+
+    '<div style="display:flex;flex-direction:column;gap:8px">'+
+      '<select id="ov-match-select" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);font-size:12px"><option value="">Escolhe o jogo…</option>'+options+'</select>'+
+      '<div style="display:flex;gap:8px;align-items:center">'+
+        '<input id="ov-home" type="number" min="0" max="99" placeholder="Casa" style="width:70px;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);text-align:center">'+
+        '<span style="color:var(--text3)">–</span>'+
+        '<input id="ov-away" type="number" min="0" max="99" placeholder="Fora" style="width:70px;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);text-align:center">'+
+        '<button onclick="saveScoreOverride()" style="flex:1;padding:9px;border-radius:8px;border:none;background:var(--accent);color:#000;font-weight:700;font-size:12px;cursor:pointer">Aplicar correção</button>'+
+      '</div>'+
+    '</div>'+
+    (activeRows ? '<div style="margin-top:10px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:4px">Correções ativas</div>'+activeRows+'</div>' : '')+
+  '</div>';
+}
+
+async function saveScoreOverride() {
+  var sel = document.getElementById('ov-match-select');
+  var hEl = document.getElementById('ov-home'), aEl = document.getElementById('ov-away');
+  var mid = sel && sel.value;
+  var home = hEl ? parseInt(hEl.value,10) : NaN;
+  var away = aEl ? parseInt(aEl.value,10) : NaN;
+  if (!mid) { alert('Escolhe o jogo a corrigir.'); return; }
+  if (isNaN(home) || isNaN(away) || home<0 || away<0) { alert('Indica os dois resultados (0 ou mais).'); return; }
+  if (!currentUser || !fbDb) return;
+  try {
+    await fbDb.collection('scoreOverrides').doc(String(mid)).set({
+      home: home, away: away,
+      updatedBy: currentUser.uid,
+      updatedByName: currentUser.displayName || '',
+      updatedAt: new Date().toISOString()
+    });
+    MANUAL_SCORE_OVERRIDES[String(mid)] = { home: home, away: away };
+    await loadPalpites();
+  } catch(e) {
+    alert('Erro ao gravar correção: ' + e.message);
+  }
+}
+
+async function removeScoreOverride(matchId) {
+  if (!confirm('Remover esta correção manual?')) return;
+  if (!fbDb) return;
+  try {
+    await fbDb.collection('scoreOverrides').doc(String(matchId)).delete();
+    delete MANUAL_SCORE_OVERRIDES[String(matchId)];
+    await loadPalpites();
+  } catch(e) {
+    alert('Erro ao remover correção: ' + e.message);
+  }
 }
 
 function renderTournamentPalpites(allPreds, usersMap) {
@@ -1743,6 +1862,8 @@ async function loadRanking() {
       var mRes = await wcFetch('competitions/WC/matches');
       if (mRes.ok) {
         var mData = await mRes.json();
+        await ensureScoreOverridesLoaded();
+        applyScoreOverrides(mData.matches);
         (mData.matches||[]).forEach(function(m){ matchesMap[String(m.id)] = m; });
       } else {
         console.warn('[Ranking] API erro:', mRes.status);
