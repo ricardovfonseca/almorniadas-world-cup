@@ -1501,8 +1501,19 @@ function getUserName(uid, c) {
   return uid.slice(0,6)+'…';
 }
 
+// Quem deve ser verificado para "falta palpite": authorizedUids é só quem tem acesso
+// à comparação em Palpites (lista de admin), não quem realmente joga — por isso usamos
+// a união de todos os perfis em /users (qualquer um que já entrou no site) com todos
+// os uids que já têm pelo menos um palpite em /predictions.
+function getPalpitesParticipants(c) {
+  var set = {};
+  Object.keys(c.usersMap||{}).forEach(function(uid){ set[uid]=true; });
+  Object.keys(c.allPreds||{}).forEach(function(uid){ set[uid]=true; });
+  return Object.keys(set);
+}
+
 function buildMissingUsersAlert(c) {
-  if (!c.authorizedUids || !c.allMatchesList) return '';
+  if (!c.allMatchesList) return '';
   var now = new Date();
   var todayKey    = lisbonDateKey(now);
   var d2 = new Date(now); d2.setDate(d2.getDate()+1);
@@ -1523,7 +1534,7 @@ function buildMissingUsersAlert(c) {
   if (!upcomingMatches.length) return '';
   // Build per-user missing list
   var missingRows = [];
-  (c.authorizedUids||[]).forEach(function(uid){
+  getPalpitesParticipants(c).forEach(function(uid){
     var preds = (c.allPreds[uid] && c.allPreds[uid].matches) ? c.allPreds[uid].matches : {};
     var missingMatchLabels = [];
     upcomingMatches.forEach(function(m){
@@ -1829,12 +1840,13 @@ function renderPalpitesByUser(allPreds, usersMap, matchesMap) {
   }).join('')+'</div>';
 }
 
-// Vista "Sem Palpite" — agrupado por jogo, mostra quem (de entre os autorizados na
-// secção Palpites) ainda não tem palpite, restrito a jogos já começados/terminados
-// (jogos futuros não contam como "esquecido" ainda).
+// Vista "Sem Palpite" — agrupado por jogo, mostra quem (de entre todos os jogadores
+// conhecidos, não só quem tem acesso de comparação) ainda não tem palpite, restrito a
+// jogos já começados/terminados (jogos futuros não contam como "esquecido" ainda).
 function renderPalpitesMissing(c) {
-  if (!c.authorizedUids || !c.authorizedUids.length) {
-    return '<div style="padding:20px;text-align:center;font-size:13px;color:var(--text3)">Sem utilizadores na secção Palpites.</div>';
+  var participants = getPalpitesParticipants(c);
+  if (!participants.length) {
+    return '<div style="padding:20px;text-align:center;font-size:13px;color:var(--text3)">Sem jogadores para verificar.</div>';
   }
   var now = new Date();
   var relevant = (c.allMatchesList||[]).filter(function(m){
@@ -1846,7 +1858,7 @@ function renderPalpitesMissing(c) {
 
   var cards = relevant.map(function(m){
     var mid = String(m.id);
-    var missingUids = c.authorizedUids.filter(function(uid){
+    var missingUids = participants.filter(function(uid){
       var preds = (c.allPreds[uid] && c.allPreds[uid].matches) || {};
       return !preds[mid];
     });
