@@ -452,6 +452,24 @@ async function saveMatchPrediction(matchId, home, away) {
   userPredictions.matches[String(matchId)] = { home: home, away: away };
 }
 
+// Grava um palpite no doc de OUTRO utilizador (uso "admin" a partir da vista "Sem
+// Palpite"). Só funciona se a regra do Firestore para /predictions permitir escrita a
+// quem tem doc em /palpites — ver backupRULESfirestore.txt.
+async function adminSaveMatchPrediction(uid, matchId, home, away) {
+  if (!fbDb) return;
+  var ref = fbDb.collection('predictions').doc(uid);
+  var value = { home: home, away: away, updatedAt: new Date().toISOString() };
+  var updateData = {};
+  updateData['matches.' + matchId] = value;
+  try {
+    await ref.update(updateData);
+  } catch(e) {
+    var initData = { matches: {}, tournament: {} };
+    initData.matches[String(matchId)] = value;
+    await ref.set(initData);
+  }
+}
+
 async function saveTournamentPicks() {
   if (!fbDb || !currentUser) return;
   var champion   = document.getElementById('pick-champion')  ? document.getElementById('pick-champion').value.trim()   : '';
@@ -1872,18 +1890,16 @@ function renderPalpitesMissing(c) {
       var avatar = u.photo?'<img src="'+escHtml(u.photo)+'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0">'
           :'<div style="width:22px;height:22px;border-radius:50%;background:var(--bg3);flex-shrink:0"></div>';
       var isMe = currentUser && uid === currentUser.uid;
-      if (!isMe) {
-        return '<div style="display:flex;align-items:center;gap:6px;padding:4px 0">'+
-          avatar+'<span style="font-size:12px;color:var(--text2)">'+escHtml(getUserName(uid,c))+'</span>'+
-        '</div>';
-      }
-      // O próprio utilizador pode preencher o palpite em falta diretamente aqui
+      var safeUid = String(uid).replace(/[^a-zA-Z0-9]/g,'_');
+      var label = escHtml(getUserName(uid,c)) + (isMe ? ' (tu)' : '');
+      // Preenchimento direto aqui: o próprio para si, ou um utilizador com acesso a
+      // Palpites (admin) em nome de qualquer jogador em falta.
       return '<div style="display:flex;align-items:center;gap:6px;padding:5px 6px;background:rgba(0,201,167,.08);border-radius:8px;margin:2px 0;flex-wrap:wrap">'+
-        avatar+'<span style="font-size:12px;color:var(--accent);font-weight:700;flex:1;min-width:60px">'+escHtml(getUserName(uid,c))+' (tu)</span>'+
-        '<input id="miss-h-'+safeKey+'" type="number" min="0" max="99" placeholder="Casa" style="width:48px;padding:5px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--text);text-align:center;font-size:12px">'+
+        avatar+'<span style="font-size:12px;color:'+(isMe?'var(--accent)':'var(--text2)')+';font-weight:'+(isMe?'700':'600')+';flex:1;min-width:60px">'+label+'</span>'+
+        '<input id="miss-h-'+safeKey+'-'+safeUid+'" type="number" min="0" max="99" placeholder="Casa" style="width:48px;padding:5px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--text);text-align:center;font-size:12px">'+
         '<span style="color:var(--text3);font-size:11px">–</span>'+
-        '<input id="miss-a-'+safeKey+'" type="number" min="0" max="99" placeholder="Fora" style="width:48px;padding:5px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--text);text-align:center;font-size:12px">'+
-        '<button onclick="saveMissingPrediction(\''+mid+'\')" style="padding:6px 10px;border-radius:6px;border:none;background:var(--accent);color:#000;font-weight:700;font-size:11px;cursor:pointer;flex-shrink:0">Guardar</button>'+
+        '<input id="miss-a-'+safeKey+'-'+safeUid+'" type="number" min="0" max="99" placeholder="Fora" style="width:48px;padding:5px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--text);text-align:center;font-size:12px">'+
+        '<button onclick="saveMissingPrediction(\''+mid+'\',\''+uid+'\')" style="padding:6px 10px;border-radius:6px;border:none;background:var(--accent);color:#000;font-weight:700;font-size:11px;cursor:pointer;flex-shrink:0">Guardar</button>'+
       '</div>';
     }).join('');
     return '<div class="card" style="margin-bottom:12px">'+
@@ -1910,18 +1926,24 @@ function renderPalpitesMissing(c) {
 // que escreve sempre no doc do próprio currentUser — por isso só a linha do próprio
 // utilizador tem este formulário (as regras do Firestore também não permitem escrever
 // no doc de outra pessoa).
-async function saveMissingPrediction(matchId) {
+async function saveMissingPrediction(matchId, uid) {
   var safeKey = String(matchId).replace(/[^a-zA-Z0-9]/g,'_');
-  var hEl = document.getElementById('miss-h-'+safeKey), aEl = document.getElementById('miss-a-'+safeKey);
+  var safeUid = String(uid).replace(/[^a-zA-Z0-9]/g,'_');
+  var hEl = document.getElementById('miss-h-'+safeKey+'-'+safeUid), aEl = document.getElementById('miss-a-'+safeKey+'-'+safeUid);
   var home = hEl ? parseInt(hEl.value,10) : NaN;
   var away = aEl ? parseInt(aEl.value,10) : NaN;
   if (isNaN(home) || isNaN(away) || home<0 || away<0) { alert('Indica os dois resultados (0 ou mais).'); return; }
   if (!currentUser) return;
   try {
-    await saveMatchPrediction(matchId, home, away);
+    if (uid === currentUser.uid) {
+      await saveMatchPrediction(matchId, home, away);
+    } else {
+      await adminSaveMatchPrediction(uid, matchId, home, away);
+    }
     await loadPalpites();
   } catch(e) {
-    alert('Erro ao guardar palpite: ' + e.message);
+    var extra = (uid !== currentUser.uid) ? ' (precisas de ter publicado a regra atualizada de /predictions no Firebase Console)' : '';
+    alert('Erro ao guardar palpite: ' + e.message + extra);
   }
 }
 
