@@ -1578,7 +1578,7 @@ function renderScoreOverrideAdmin(c) {
     var ht = m.homeTeam ? (m.homeTeam.shortName||m.homeTeam.name||'?') : '?';
     var at = m.awayTeam ? (m.awayTeam.shortName||m.awayTeam.name||'?') : '?';
     var dateLabel = m.utcDate ? new Date(m.utcDate).toLocaleDateString('pt-PT',{day:'2-digit',month:'2-digit'}) : '';
-    return '<option value="'+m.id+'">'+escHtml(ht)+' vs '+escHtml(at)+(dateLabel?' ('+dateLabel+')':'')+'</option>';
+    return '<option value="'+m.id+'">'+escHtml(ht)+' vs '+escHtml(at)+(dateLabel?' ('+dateLabel+')':'')+' ['+m.id+']</option>';
   }).join('');
 
   var activeIds = Object.keys(MANUAL_SCORE_OVERRIDES);
