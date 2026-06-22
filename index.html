@@ -1556,15 +1556,18 @@ function renderPalpitesUI(container) {
   var c = palpitesCache;
   var btnBase = 'flex:1;padding:9px;border-radius:10px;border:none;font-size:13px;font-weight:700;cursor:pointer;transition:all .2s;';
   var toggle =
-    '<div style="display:flex;gap:8px;padding:16px 16px 0">'+
+    '<div style="display:flex;gap:8px;padding:16px 16px 0;flex-wrap:wrap">'+
       '<button onclick="palpitesSetView(\'byMatch\')" style="'+btnBase+(palpitesView==='byMatch'?'background:var(--accent);color:#000':'background:var(--card2);color:var(--text2)')+'">⚽ Por Jogo</button>'+
       '<button onclick="palpitesSetView(\'byUser\')" style="'+btnBase+(palpitesView==='byUser'?'background:var(--accent);color:#000':'background:var(--card2);color:var(--text2)')+'">👤 Por Utilizador</button>'+
+      '<button onclick="palpitesSetView(\'missing\')" style="'+btnBase+(palpitesView==='missing'?'background:var(--accent);color:#000':'background:var(--card2);color:var(--text2)')+'">🚫 Sem Palpite</button>'+
     '</div>';
   var missingAlert = buildMissingUsersAlert(c);
   var tourTable = renderTournamentPalpites(c.allPreds, c.usersMap);
   var main = palpitesView==='byMatch'
     ? renderPalpitesByMatch(c.allPreds, c.usersMap, c.matchesMap)
-    : renderPalpitesByUser(c.allPreds, c.usersMap, c.matchesMap);
+    : palpitesView==='byUser'
+    ? renderPalpitesByUser(c.allPreds, c.usersMap, c.matchesMap)
+    : renderPalpitesMissing(c);
   var overrideAdmin = renderScoreOverrideAdmin(c);
   container.innerHTML = toggle + missingAlert + main + tourTable + overrideAdmin;
 }
@@ -1824,6 +1827,90 @@ function renderPalpitesByUser(allPreds, usersMap, matchesMap) {
       '<div id="puser-'+safeUid+'" style="display:none">'+predRows+'</div>'+
     '</div>';
   }).join('')+'</div>';
+}
+
+// Vista "Sem Palpite" — agrupado por jogo, mostra quem (de entre os autorizados na
+// secção Palpites) ainda não tem palpite, restrito a jogos já começados/terminados
+// (jogos futuros não contam como "esquecido" ainda).
+function renderPalpitesMissing(c) {
+  if (!c.authorizedUids || !c.authorizedUids.length) {
+    return '<div style="padding:20px;text-align:center;font-size:13px;color:var(--text3)">Sem utilizadores na secção Palpites.</div>';
+  }
+  var now = new Date();
+  var relevant = (c.allMatchesList||[]).filter(function(m){
+    if (!m.utcDate) return false;
+    var started = ['IN_PLAY','PAUSED','FINISHED','FULL_TIME'].indexOf(m.status) >= 0;
+    return started || new Date(m.utcDate) <= now;
+  });
+  relevant.sort(function(a,b){ return (a.utcDate||'') < (b.utcDate||'') ? -1 : 1; });
+
+  var cards = relevant.map(function(m){
+    var mid = String(m.id);
+    var missingUids = c.authorizedUids.filter(function(uid){
+      var preds = (c.allPreds[uid] && c.allPreds[uid].matches) || {};
+      return !preds[mid];
+    });
+    if (!missingUids.length) return '';
+    var ht = m.homeTeam ? (m.homeTeam.shortName||m.homeTeam.name||'?') : '?';
+    var at = m.awayTeam ? (m.awayTeam.shortName||m.awayTeam.name||'?') : '?';
+    var dateLabel = m.utcDate ? new Date(m.utcDate).toLocaleDateString('pt-PT',{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'Europe/Lisbon'}) : '';
+    var safeKey = mid.replace(/[^a-zA-Z0-9]/g,'_');
+    var names = missingUids.map(function(uid){
+      var u = c.usersMap[uid] || {};
+      var avatar = u.photo?'<img src="'+escHtml(u.photo)+'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0">'
+          :'<div style="width:22px;height:22px;border-radius:50%;background:var(--bg3);flex-shrink:0"></div>';
+      var isMe = currentUser && uid === currentUser.uid;
+      if (!isMe) {
+        return '<div style="display:flex;align-items:center;gap:6px;padding:4px 0">'+
+          avatar+'<span style="font-size:12px;color:var(--text2)">'+escHtml(getUserName(uid,c))+'</span>'+
+        '</div>';
+      }
+      // O próprio utilizador pode preencher o palpite em falta diretamente aqui
+      return '<div style="display:flex;align-items:center;gap:6px;padding:5px 6px;background:rgba(0,201,167,.08);border-radius:8px;margin:2px 0;flex-wrap:wrap">'+
+        avatar+'<span style="font-size:12px;color:var(--accent);font-weight:700;flex:1;min-width:60px">'+escHtml(getUserName(uid,c))+' (tu)</span>'+
+        '<input id="miss-h-'+safeKey+'" type="number" min="0" max="99" placeholder="Casa" style="width:48px;padding:5px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--text);text-align:center;font-size:12px">'+
+        '<span style="color:var(--text3);font-size:11px">–</span>'+
+        '<input id="miss-a-'+safeKey+'" type="number" min="0" max="99" placeholder="Fora" style="width:48px;padding:5px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--text);text-align:center;font-size:12px">'+
+        '<button onclick="saveMissingPrediction(\''+mid+'\')" style="padding:6px 10px;border-radius:6px;border:none;background:var(--accent);color:#000;font-weight:700;font-size:11px;cursor:pointer;flex-shrink:0">Guardar</button>'+
+      '</div>';
+    }).join('');
+    return '<div class="card" style="margin-bottom:12px">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">'+
+        '<div style="display:flex;align-items:center;gap:6px">'+
+          flagImg(ht,18)+'<span style="font-size:13px;font-weight:700">'+escHtml(ht)+'</span>'+
+          '<span style="color:var(--text3);font-size:11px">vs</span>'+
+          '<span style="font-size:13px;font-weight:700">'+escHtml(at)+'</span>'+flagImg(at,18)+
+        '</div>'+
+        '<span style="font-size:11px;color:var(--text3)">'+escHtml(dateLabel)+'</span>'+
+      '</div>'+
+      '<div style="margin-top:6px;font-size:10px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:1px">⚠️ '+missingUids.length+' sem palpite</div>'+
+      '<div style="margin-top:4px">'+names+'</div>'+
+    '</div>';
+  }).filter(Boolean).join('');
+
+  if (!cards) {
+    return '<div style="padding:20px;text-align:center;font-size:13px;color:var(--accent)">🎉 Toda a gente tem palpite em todos os jogos já começados!</div>';
+  }
+  return '<div style="padding:12px 16px 4px"><div style="font-size:11px;color:var(--text3)">Jogos já começados ou terminados em que falta pelo menos um palpite.</div></div>'+cards;
+}
+
+// Guarda um palpite tardio a partir da vista "Sem Palpite". Reutiliza saveMatchPrediction(),
+// que escreve sempre no doc do próprio currentUser — por isso só a linha do próprio
+// utilizador tem este formulário (as regras do Firestore também não permitem escrever
+// no doc de outra pessoa).
+async function saveMissingPrediction(matchId) {
+  var safeKey = String(matchId).replace(/[^a-zA-Z0-9]/g,'_');
+  var hEl = document.getElementById('miss-h-'+safeKey), aEl = document.getElementById('miss-a-'+safeKey);
+  var home = hEl ? parseInt(hEl.value,10) : NaN;
+  var away = aEl ? parseInt(aEl.value,10) : NaN;
+  if (isNaN(home) || isNaN(away) || home<0 || away<0) { alert('Indica os dois resultados (0 ou mais).'); return; }
+  if (!currentUser) return;
+  try {
+    await saveMatchPrediction(matchId, home, away);
+    await loadPalpites();
+  } catch(e) {
+    alert('Erro ao guardar palpite: ' + e.message);
+  }
 }
 
 /* ══ Ranking ══ */
