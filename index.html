@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Almorníadas World Cup 2026 🏆</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏆</text></svg>">
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
@@ -581,6 +582,7 @@ const CC = {
 
 function flagImg(nameOrCode, size) {
   size = size || 40;
+  if (!nameOrCode) return '<span style="font-size:'+Math.round(size*.7)+'px">&#x1F3F3;</span>';
   var code = (nameOrCode.length <= 6 && nameOrCode === nameOrCode.toLowerCase())
     ? nameOrCode : (CC[nameOrCode] || null);
   if (!code) return '<span style="font-size:'+Math.round(size*.7)+'px">&#x1F3F3;</span>';
@@ -1143,7 +1145,7 @@ function statusBadge(s) {
 }
 
 function renderMatch(m) {
-  var home=m.homeTeam.name, away=m.awayTeam.name;
+  var home=(m.homeTeam && m.homeTeam.name) || 'A definir', away=(m.awayTeam && m.awayTeam.name) || 'A definir';
   var score=m.score&&m.score.fullTime, hasScore=score&&score.home!==null;
   var isLive=m.status==='IN_PLAY'||m.status==='PAUSED';
   var kickoff=m.utcDate?new Date(m.utcDate).toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Lisbon'}):'';
