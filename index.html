@@ -1755,12 +1755,14 @@ function renderPalpitesByMatch(allPreds, usersMap, matchesMap) {
     byDate[key].push(mid);
   });
   Object.keys(byDate).forEach(function(k){
-    byDate[k].sort(function(a,b){ return ((matchesMap[a]&&matchesMap[a].utcDate)||'') < ((matchesMap[b]&&matchesMap[b].utcDate)||'') ? -1 : 1; });
+    // Mais recente primeiro dentro do mesmo dia
+    byDate[k].sort(function(a,b){ return ((matchesMap[a]&&matchesMap[a].utcDate)||'') > ((matchesMap[b]&&matchesMap[b].utcDate)||'') ? -1 : 1; });
   });
 
   var todayKey=lisbonDateKey(new Date()), d2=new Date(); d2.setDate(d2.getDate()+1); var tomorrowKey=lisbonDateKey(d2);
 
-  return Object.keys(byDate).sort().map(function(dateKey){
+  // Dias por ordem decrescente (mais recente → mais antigo)
+  return Object.keys(byDate).sort().reverse().map(function(dateKey){
     var label = dateKey==='9999-TBD' ? 'Data TBD'
       : dateKey===todayKey ? 'Hoje'
       : dateKey===tomorrowKey ? 'Amanhã'
