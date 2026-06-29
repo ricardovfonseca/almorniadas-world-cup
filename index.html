@@ -180,6 +180,7 @@
     .match-score{text-align:center;min-width:70px}
     .score-main{font-size:30px;font-weight:900;letter-spacing:2px}
     .score-time{font-size:11px;color:var(--text3);margin-top:2px}
+    .score-90{font-size:10px;color:var(--text3);margin-top:2px;opacity:.85}
     .score-vs{font-size:13px;font-weight:700;color:var(--text3)}
     .match-footer{padding:8px 14px 12px;display:flex;justify-content:center;gap:8px}
     .match-detail{font-size:10px;color:var(--text3);background:var(--bg3);padding:3px 8px;border-radius:10px}
@@ -883,7 +884,20 @@ function addNewsClicks(containerId) {
   });
 }
 
-/* ══ Scoring logic ══ */
+/* ══ Scoring logic ══
+   A pontuação conta SEMPRE o resultado aos 90 minutos (tempo regulamentar).
+   Prolongamento e grandes penalidades não contam para os palpites.
+   A API (football-data.org v4) guarda esse valor em score.regularTime;
+   em jogos sem prolongamento é igual a score.fullTime, por isso serve
+   também de fallback para dados antigos sem esse campo. ══ */
+function regulationScore(m) {
+  if (!m || !m.score) return null;
+  var rt = m.score.regularTime;
+  if (rt && rt.home !== null && rt.home !== undefined) return { home: rt.home, away: rt.away };
+  var ft = m.score.fullTime;
+  if (ft && ft.home !== null && ft.home !== undefined) return { home: ft.home, away: ft.away };
+  return null;
+}
 function calcMatchPoints(pred, actual) {
   if (!actual || actual.home === null || actual.away === null) return null;
   if (!pred || pred.home === undefined || pred.away === undefined) return null;
@@ -923,6 +937,7 @@ function applyScoreOverrides(matches) {
     if (!ov) return;
     if (!m.score) m.score = {};
     m.score.fullTime = { home: ov.home, away: ov.away };
+    m.score.regularTime = { home: ov.home, away: ov.away };
     if (m.status !== 'FINISHED' && m.status !== 'FULL_TIME') m.status = 'FINISHED';
   });
   return matches;
@@ -951,8 +966,9 @@ function buildMatchPointsMap(matchesMap) {
   var matchPoints = {};
   Object.keys(matchesMap||{}).forEach(function(mid){
     var m = matchesMap[mid];
-    if (m && (m.status==='FINISHED'||m.status==='FULL_TIME') && m.score && m.score.fullTime && m.score.fullTime.home !== null) {
-      matchPoints[mid] = { home: m.score.fullTime.home, away: m.score.fullTime.away };
+    if (m && (m.status==='FINISHED'||m.status==='FULL_TIME')) {
+      var rs = regulationScore(m);
+      if (rs) matchPoints[mid] = rs;
     }
   });
   return matchPoints;
@@ -1152,14 +1168,20 @@ function renderMatch(m) {
   var kickoff=m.utcDate?new Date(m.utcDate).toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Lisbon'}):'';
   var group=m.group?m.group.replace('GROUP_','Grupo '):'';
   var mid = String(m.id || (home+'-'+away).replace(/\s/g,''));
-  // hidden element to pass actual score for points calculation
-  var actualScoreEl = hasScore ? '<span id="actual-score-'+mid+'" data-home="'+score.home+'" data-away="'+score.away+'" style="display:none"></span>' : '';
+  // resultado de 90 min: usado para pontos (no painel de palpite) e, quando difere
+  // do resultado final, mostrado como sub-label (jogo decidido no prolongamento/penaltis)
+  var regScore = regulationScore(m);
+  var showReg = hasScore && regScore && (regScore.home!==score.home || regScore.away!==score.away);
+  var ptsScore = regScore || score;
+  // hidden element to pass actual (90 min) score for points calculation
+  var actualScoreEl = hasScore && ptsScore ? '<span id="actual-score-'+mid+'" data-home="'+ptsScore.home+'" data-away="'+ptsScore.away+'" style="display:none"></span>' : '';
   return '<div class="match-card" data-status="'+m.status+'" data-utcdate="'+(m.utcDate||'')+'">'+
     '<div class="match-header"><span>'+(group||'Mundial 2026')+'</span>'+statusBadge(m.status)+'</div>'+
     '<div class="match-body"><div class="match-teams">'+
       '<div class="match-team">'+flagImg(home,44)+'<div class="team-name">'+home+'</div></div>'+
       '<div class="match-score">'+
         (hasScore ? '<div class="score-main">'+score.home+' – '+score.away+'</div>' : '<div class="score-vs">'+(kickoff||'TBD')+'</div>')+
+        (showReg ? '<div class="score-90">90 min: '+regScore.home+' – '+regScore.away+'</div>' : '')+
         actualScoreEl+
         (isLive&&m.minute ? '<div class="score-time">'+m.minute+"'</div>" : '')+
       '</div>'+
@@ -1414,10 +1436,12 @@ async function loadMyPredictions() {
       var ht = m.homeTeam ? (m.homeTeam.shortName||m.homeTeam.name||mid) : mid;
       var at = m.awayTeam ? (m.awayTeam.shortName||m.awayTeam.name||'?') : '?';
       var actual = m.score && m.score.fullTime && m.score.fullTime.home!==null ? m.score.fullTime : null;
-      var pts = actual ? calcMatchPoints(p,{home:actual.home,away:actual.away}) : null;
+      var regAct = regulationScore(m);
+      var pts = regAct ? calcMatchPoints(p, regAct) : null;
       var bg = pts===3?'rgba(0,201,167,.2);color:var(--accent)':pts>0?'rgba(255,215,0,.15);color:var(--gold)':'rgba(255,71,87,.1);color:var(--red)';
       var ptsHtml = pts!==null ? '<span style="font-size:11px;padding:1px 5px;border-radius:10px;background:'+bg+'">'+pts+'pts</span>' : '';
-      var actualHtml = actual ? ' <span style="color:var(--text3);font-size:11px">('+actual.home+'-'+actual.away+')</span>' : '';
+      var showReg = actual && regAct && (regAct.home!==actual.home || regAct.away!==actual.away);
+      var actualHtml = actual ? ' <span style="color:var(--text3);font-size:11px">('+actual.home+'-'+actual.away+(showReg?', 90\': '+regAct.home+'-'+regAct.away:'')+')</span>' : '';
       return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-top:1px solid rgba(45,66,102,.4)">'+
         '<div style="font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">'+
           flagImg(ht,15)+' '+escHtml(ht)+' <span style="color:var(--text3)">vs</span> '+escHtml(at)+' '+flagImg(at,15)+actualHtml+
@@ -1754,11 +1778,13 @@ function renderMatchPalpitesCard(mid, allPreds, usersMap, matchesMap) {
   var isFinished = m&&(m.status==='FINISHED'||m.status==='FULL_TIME');
   var actualH = isFinished&&m.score&&m.score.fullTime&&m.score.fullTime.home!==null ? m.score.fullTime.home : null;
   var actualA = isFinished&&m.score&&m.score.fullTime ? m.score.fullTime.away : null;
+  var regScore = isFinished ? regulationScore(m) : null;
+  var showReg = regScore && actualH!==null && (regScore.home!==actualH || regScore.away!==actualA);
   var group   = m&&m.group ? m.group.replace('GROUP_','Grupo ') : 'Mundial 2026';
 
   var preds = Object.keys(allPreds).map(function(uid){
     var p=(allPreds[uid].matches||{})[mid]; if (!p) return null;
-    var pts = actualH!==null ? calcMatchPoints(p,{home:actualH,away:actualA}) : null;
+    var pts = regScore ? calcMatchPoints(p, regScore) : null;
     return {uid:uid, user:usersMap[uid]||{}, pred:p, pts:pts};
   }).filter(Boolean);
   if (!preds.length) return '';
@@ -1770,7 +1796,7 @@ function renderMatchPalpitesCard(mid, allPreds, usersMap, matchesMap) {
   }
 
   var actualScoreHtml = actualH!==null
-    ? '<span style="color:var(--green);font-weight:700;font-size:13px">'+actualH+' – '+actualA+'</span>'
+    ? '<span style="color:var(--green);font-weight:700;font-size:13px">'+actualH+' – '+actualA+'</span>'+(showReg?'<div class="score-90">90 min: '+regScore.home+' – '+regScore.away+'</div>':'')
     : '<span style="color:var(--text3);font-size:12px">'+escHtml(kickoff)+'</span>';
 
   var rows = preds.map(function(r){
@@ -1816,8 +1842,9 @@ function renderPalpitesByUser(allPreds, usersMap, matchesMap) {
     var totalPts=0;
     mids.forEach(function(mid){
       var m=matchesMap[mid];
-      if (!m||!m.score||!m.score.fullTime||m.score.fullTime.home===null) return;
-      var pts=calcMatchPoints(matchPreds[mid],{home:m.score.fullTime.home,away:m.score.fullTime.away});
+      var rs = regulationScore(m);
+      if (!rs) return;
+      var pts=calcMatchPoints(matchPreds[mid], rs);
       if (pts!==null) totalPts+=pts;
     });
     mids.sort(function(a,b){ return ((matchesMap[a]&&matchesMap[a].utcDate)||'')<((matchesMap[b]&&matchesMap[b].utcDate)||'')?-1:1; });
@@ -1828,10 +1855,12 @@ function renderPalpitesByUser(allPreds, usersMap, matchesMap) {
       var at=m&&m.awayTeam?(m.awayTeam.shortName||m.awayTeam.name||'?'):'?';
       var fin=m&&(m.status==='FINISHED'||m.status==='FULL_TIME');
       var actual=fin&&m.score&&m.score.fullTime&&m.score.fullTime.home!==null?m.score.fullTime:null;
-      var pts=actual?calcMatchPoints(p,{home:actual.home,away:actual.away}):null;
+      var regAct=fin?regulationScore(m):null;
+      var pts=regAct?calcMatchPoints(p,regAct):null;
       var bg=pts===3?'rgba(0,201,167,.2);color:var(--accent)':pts>0?'rgba(255,215,0,.15);color:var(--gold)':'rgba(255,71,87,.1);color:var(--red)';
       var ptsHtml=pts!==null?'<span style="font-size:11px;padding:1px 5px;border-radius:10px;background:'+bg+'">'+pts+'pts</span>':'';
-      var actualHtml=actual?' <span style="color:var(--text3);font-size:11px">('+actual.home+'-'+actual.away+')</span>':'';
+      var showReg=actual&&regAct&&(regAct.home!==actual.home||regAct.away!==actual.away);
+      var actualHtml=actual?' <span style="color:var(--text3);font-size:11px">('+actual.home+'-'+actual.away+(showReg?', 90\': '+regAct.home+'-'+regAct.away:'')+')</span>':'';
       return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-top:1px solid rgba(45,66,102,.4)">'+
         '<div style="font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">'+
           flagImg(ht,15)+' '+escHtml(ht)+' <span style="color:var(--text3)">vs</span> '+escHtml(at)+' '+flagImg(at,15)+actualHtml+
